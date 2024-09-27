@@ -512,30 +512,49 @@ func composeToServiceValues(
 		}
 
 		// Helper lambda to look for resource requirement label, validate it, and update value
-		updateResourceRequirement := func(dest *string, label string, serviceLabels composetypes.Labels) (err error) {
-			resourceValue := lagoon.CheckDockerComposeLagoonLabel(serviceLabels, label)
-			if resourceValue != "" {
-				err := ValidateResourceQuantity(resourceValue)
-				if err != nil {
-					return fmt.Errorf("Value of sesource requirement label %s for %s is not valid resource quantity: %v", label, servicePersistentName, err)
+		updateResourceRequirement := func(dest *string, resource_suffix string) (err error) {
+			// First check for branch override labels (example: lagoon.resources.override-branch.dev.requests.cpu)
+			{
+				branchOverrideLabel := fmt.Sprintf("lagoon.resources.override-branch.%s.%s", buildValues.Branch, resource_suffix)
+
+				overrideResourceValue := lagoon.CheckDockerComposeLagoonLabel(composeServiceValues.Labels, branchOverrideLabel)
+				if overrideResourceValue != "" {
+					err := ValidateResourceQuantity(overrideResourceValue)
+					if err != nil {
+						return fmt.Errorf("Value of resource requirement label %s for %s is not valid resource quantity: %v", branchOverrideLabel, servicePersistentName, err)
+					}
+					*dest = overrideResourceValue
+					return nil
 				}
-				*dest = resourceValue
+			}
+
+			// If no branch override, check for base service label (example: lagoon.resources.requests.cpu)
+			{
+				baseLabel := fmt.Sprintf("lagoon.resources.%s", resource_suffix)
+				resourceValue := lagoon.CheckDockerComposeLagoonLabel(composeServiceValues.Labels, baseLabel)
+				if resourceValue != "" {
+					err := ValidateResourceQuantity(resourceValue)
+					if err != nil {
+						return fmt.Errorf("Value of resource requirement label %s for %s is not valid resource quantity: %v", baseLabel, servicePersistentName, err)
+					}
+					*dest = resourceValue
+				}
 			}
 			return nil
 		}
 
-		// Build container resource requirements from service labels
+		// Build container resource requirements from service labels, either base label or branch specific override.
 		resources := Resources{}
-		if err := updateResourceRequirement(&resources.Requests.Cpu, "lagoon.resources.requests.cpu", composeServiceValues.Labels); err != nil {
+		if err := updateResourceRequirement(&resources.Requests.Cpu, "requests.cpu"); err != nil {
 			return nil, err
 		}
-		if err := updateResourceRequirement(&resources.Requests.Memory, "lagoon.resources.requests.memory", composeServiceValues.Labels); err != nil {
+		if err := updateResourceRequirement(&resources.Requests.Memory, "requests.memory"); err != nil {
 			return nil, err
 		}
-		if err := updateResourceRequirement(&resources.Limits.Cpu, "lagoon.resources.limits.cpu", composeServiceValues.Labels); err != nil {
+		if err := updateResourceRequirement(&resources.Limits.Cpu, "limits.cpu"); err != nil {
 			return nil, err
 		}
-		if err := updateResourceRequirement(&resources.Limits.Memory, "lagoon.resources.limits.memory", composeServiceValues.Labels); err != nil {
+		if err := updateResourceRequirement(&resources.Limits.Memory, "limits.memory"); err != nil {
 			return nil, err
 		}
 
