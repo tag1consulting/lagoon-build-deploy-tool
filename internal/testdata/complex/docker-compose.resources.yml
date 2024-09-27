@@ -92,7 +92,7 @@ services:
       lagoon.persistent: /app/docroot/sites/default/files/
       lagoon.persistent.size: 5Gi
       lagoon.name: nginx-php
-      lagon.resources.requests.cpu: 20m
+      lagoon.resources.requests.cpu: 20m
       lagoon.resources.limits.cpu: 200m
 
 
