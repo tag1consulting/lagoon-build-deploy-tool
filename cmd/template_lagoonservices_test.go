@@ -489,13 +489,6 @@ func TestTemplateLagoonServices(t *testing.T) {
 					EnvironmentName: "main",
 					Branch:          "main",
 					LagoonYAML:      "internal/testdata/complex/lagoon.resources.yml",
-					EnvVariables: []lagoon.EnvironmentVariable{
-						{
-							Name:  "NGINX_CPU_REQUEST",
-							Value: "50m",
-							Scope: "global",
-						},
-					},
 					ImageReferences: map[string]string{
 						"nginx": "harbor.example/example-project/main/nginx@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
 						"php":   "harbor.example/example-project/main/php@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",

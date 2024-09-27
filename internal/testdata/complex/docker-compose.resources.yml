@@ -70,9 +70,9 @@ services:
       lagoon.persistent: /app/docroot/sites/default/files/
       lagoon.persistent.size: 5Gi
       lagoon.name: nginx-php
-      # NGINX_CPU_REQUEST is injected as project env in test
-      lagoon.resources.requests.cpu: ${NGINX_CPU_REQUEST}
+      lagoon.resources.requests.cpu: 10m
       lagoon.resources.limits.cpu: 100m
+      lagoon.resources.override-branch.main.requests.cpu: 50m
     expose:
       - "8080"
   php:
