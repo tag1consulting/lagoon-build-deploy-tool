@@ -3,13 +3,13 @@ name: Publish build-deploy-image
 on:
   push:
     branches:
-      - 'main'
+      - 'tag1-main'
       - 'build-image'
     tags:
       - 'v*.*.*'
   pull_request:
     branches:
-      - 'main'
+      - 'tag1-main'
       - 'release/*'
 
 jobs:
