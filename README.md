@@ -37,6 +37,8 @@ php:
 To deploy a custom version of this image, in the `lagoon-build-deploy` chart, the `overrideBuildDeployImage` value can be set. ([Context](https://github.com/uselagoon/lagoon-charts/blob/42cf5a20d442036faa6aca2081e74f3fcffcb65c/charts/lagoon-build-deploy/values.yaml#L162C1-L162C25))
 `lagoon-build-deploy` chart is a dependency of `lagoon-remote` chart, the value should be specified there.
 
+Alternatively, the deploy target (`lagoon list deploytargets`) has a buildimage override field that may be used.
+
 # Build and Deploy Resource Generator
 
 This is a tool used to help with creating resources for Lagoon builds
