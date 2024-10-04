@@ -38,6 +38,10 @@ To deploy a custom version of this image, in the `lagoon-build-deploy` chart, th
 `lagoon-build-deploy` chart is a dependency of `lagoon-remote` chart, the value should be specified there.
 
 Alternatively, the deploy target (`lagoon list deploytargets`) has a buildimage override field that may be used.
+```bash
+lagoon update deploytargets --id <id> --build-image 'ghcr.io/tag1consulting/build-deploy-image:v2.21.0-tag1-0.1'
+```
+lagoon list projects can be used to verify project is associate with a given deploytarget.
 
 # Build and Deploy Resource Generator
 
