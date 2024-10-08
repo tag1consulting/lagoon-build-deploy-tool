@@ -34,14 +34,15 @@ php:
 
 ### Deploying
 
-To deploy a custom version of this image, in the `lagoon-build-deploy` chart, the `overrideBuildDeployImage` value can be set. ([Context](https://github.com/uselagoon/lagoon-charts/blob/42cf5a20d442036faa6aca2081e74f3fcffcb65c/charts/lagoon-build-deploy/values.yaml#L162C1-L162C25))
-`lagoon-build-deploy` chart is a dependency of `lagoon-remote` chart, the value should be specified there.
-
-Alternatively, the deploy target (`lagoon list deploytargets`) has a buildimage override field that may be used.
+The deploy target (`lagoon list deploytargets`) has a buildimage override field that may be used.
 ```bash
 lagoon update deploytargets --id <id> --build-image 'ghcr.io/tag1consulting/build-deploy-image:v2.21.0-tag1-0.1'
 ```
 lagoon list projects can be used to verify project is associate with a given deploytarget.
+
+The `lagoon-build-deploy` chart, the `overrideBuildDeployImage` value can be set, however it does not seem to take effect. ([Context](https://github.com/uselagoon/lagoon-charts/blob/42cf5a20d442036faa6aca2081e74f3fcffcb65c/charts/lagoon-build-deploy/values.yaml#L162C1-L162C25))
+The `deploytarget` setting above should be preferred. The `lagoon-core` chart can also set the default build image for all remotes, though have not tested this as of time of writing.
+
 
 # Build and Deploy Resource Generator
 
