@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/andreyvit/diff"
 	"github.com/uselagoon/build-deploy-tool/internal/dbaasclient"
 	"github.com/uselagoon/build-deploy-tool/internal/helpers"
 	"github.com/uselagoon/build-deploy-tool/internal/lagoon"
@@ -18,6 +19,7 @@ import (
 func TestBackupTemplateGeneration(t *testing.T) {
 	tests := []struct {
 		name         string
+		description  string
 		args         testdata.TestData
 		templatePath string
 		want         string
@@ -261,6 +263,55 @@ func TestBackupTemplateGeneration(t *testing.T) {
 			templatePath: "testoutput",
 			want:         "internal/testdata/node/backup-templates/backup-9",
 		},
+		{
+			name:        "test-generic-backup-rootless-workloads",
+			description: "this will generate a podsecuritycontext if the environment is configured for rootless workloads against k8up/v1 crs",
+			args: testdata.GetSeedData(
+				testdata.TestData{
+					ProjectName:     "example-project",
+					EnvironmentName: "main",
+					Branch:          "main",
+					EnvironmentType: "production",
+					LagoonYAML:      "internal/testdata/node/lagoon.yml",
+					K8UPVersion:     "v2",
+					ProjectVariables: []lagoon.EnvironmentVariable{
+						{
+							Name:  "LAGOON_FEATURE_FLAG_ROOTLESS_WORKLOAD",
+							Value: "enabled",
+							Scope: "global",
+						},
+					},
+				}, true),
+			templatePath: "testoutput",
+			want:         "internal/testdata/node/backup-templates/test-generic-backup-rootless-workloads",
+		},
+		{
+			name:        "test-generic-backup-rootless-workloads-onrootmismatch",
+			description: "this will generate a podsecuritycontext if the environment is configured for rootless workloads k8up/v1 crs",
+			args: testdata.GetSeedData(
+				testdata.TestData{
+					ProjectName:     "example-project",
+					EnvironmentName: "main",
+					Branch:          "main",
+					EnvironmentType: "production",
+					LagoonYAML:      "internal/testdata/node/lagoon.yml",
+					K8UPVersion:     "v2",
+					ProjectVariables: []lagoon.EnvironmentVariable{
+						{
+							Name:  "LAGOON_FEATURE_FLAG_ROOTLESS_WORKLOAD",
+							Value: "enabled",
+							Scope: "global",
+						},
+						{
+							Name:  "LAGOON_FEATURE_FLAG_FS_ON_ROOT_MISMATCH",
+							Value: "enabled",
+							Scope: "global",
+						},
+					},
+				}, true),
+			templatePath: "testoutput",
+			want:         "internal/testdata/node/backup-templates/test-generic-backup-rootless-workloads-onrootmismatch",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -328,8 +379,7 @@ func TestBackupTemplateGeneration(t *testing.T) {
 							t.Errorf("couldn't read file %v: %v", tt.want, err)
 						}
 						if !reflect.DeepEqual(f1, r1) {
-							fmt.Println(string(f1))
-							t.Errorf("resulting templates do not match")
+							t.Errorf("BackupTemplateGeneration() = \n%v", diff.LineDiff(string(r1), string(f1)))
 						}
 					}
 				}
