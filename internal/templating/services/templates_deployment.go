@@ -139,10 +139,7 @@ func GenerateDeploymentTemplate(
 					}
 				}
 			}
-			if buildValues.PodAntiAffinity {
-				// if deployment.Spec.Template.Spec.Affinity == nil {
-				// 	deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{}
-				// }
+			if buildValues.PodSpreadConstraints {
 				deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{
 					{
 						MaxSkew:           1,
@@ -182,48 +179,6 @@ func GenerateDeploymentTemplate(
 						},
 					},
 				}
-				// deployment.Spec.Template.Spec.Affinity.PodAntiAffinity = &corev1.PodAntiAffinity{
-				// 	PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
-				// 		{
-				// 			Weight: 100,
-				// 			PodAffinityTerm: corev1.PodAffinityTerm{
-				// 				TopologyKey: "kubernetes.io/hostname",
-				// 				LabelSelector: &metav1.LabelSelector{
-				// 					MatchExpressions: []metav1.LabelSelectorRequirement{
-				// 						{
-				// 							Key:      "app.kubernetes.io/name",
-				// 							Operator: metav1.LabelSelectorOpIn,
-				// 							Values: []string{
-				// 								serviceTypeValues.Name,
-				// 							},
-				// 						},
-				// 						{
-				// 							Key:      "app.kubernetes.io/instance",
-				// 							Operator: metav1.LabelSelectorOpIn,
-				// 							Values: []string{
-				// 								serviceValues.OverrideName,
-				// 							},
-				// 						},
-				// 						{
-				// 							Key:      "lagoon.sh/project",
-				// 							Operator: metav1.LabelSelectorOpIn,
-				// 							Values: []string{
-				// 								buildValues.Project,
-				// 							},
-				// 						},
-				// 						{
-				// 							Key:      "lagoon.sh/environment",
-				// 							Operator: metav1.LabelSelectorOpIn,
-				// 							Values: []string{
-				// 								buildValues.Environment,
-				// 							},
-				// 						},
-				// 					},
-				// 				},
-				// 			},
-				// 		},
-				// 	},
-				// }
 			}
 
 			for key, value := range additionalLabels {
@@ -505,6 +460,8 @@ func GenerateDeploymentTemplate(
 			for _, cronjob := range serviceValues.InPodCronjobs {
 				cronjobs = fmt.Sprintf("%s%s %s\n", cronjobs, cronjob.Schedule, cronjob.Command)
 			}
+			// add any variables from the servicetype container overrides here
+			container.Container.Env = append(container.Container.Env, container.EnvVars...)
 			envvars := []corev1.EnvVar{
 				{
 					Name:  "LAGOON_GIT_SHA",
@@ -666,6 +623,7 @@ func GenerateDeploymentTemplate(
 					return nil, fmt.Errorf("no image reference was found for secondary container %s of service %s", serviceValues.LinkedService.Name, serviceValues.Name)
 				}
 
+				linkedContainer.Container.Env = append(linkedContainer.Container.Env, linkedContainer.EnvVars...)
 				envvars := []corev1.EnvVar{
 					{
 						Name:  "LAGOON_GIT_SHA",

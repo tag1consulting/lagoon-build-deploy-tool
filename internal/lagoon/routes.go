@@ -122,7 +122,7 @@ func (r *Route) UnmarshalJSON(data []byte) error {
 }
 
 // GenerateRoutesV2 generate routesv2 definitions from lagoon route mappings
-func GenerateRoutesV2(yamlRoutes *RoutesV2, routeMap map[string][]Route, variables []EnvironmentVariable, defaultIngressClass, secretPrefix string, activeStandby bool) error {
+func GenerateRoutesV2(yamlRoutes *RoutesV2, routeMap map[string][]Route, variables []EnvironmentVariable, defaultIngressClass string, activeStandby bool) error {
 	for rName, lagoonRoutes := range routeMap {
 		for _, lagoonRoute := range lagoonRoutes {
 			newRoute := RouteV2{}
@@ -189,10 +189,10 @@ func GenerateRoutesV2(yamlRoutes *RoutesV2, routeMap map[string][]Route, variabl
 					// handle wildcards
 					if ingress.Wildcard != nil {
 						newRoute.Wildcard = ingress.Wildcard
-						if *newRoute.TLSAcme == true && *newRoute.Wildcard == true {
+						if *newRoute.TLSAcme && *newRoute.Wildcard {
 							return fmt.Errorf("Route %s has wildcard: true and tls-acme: true, this is not supported", newRoute.Domain)
 						}
-						if ingress.AlternativeNames != nil && *newRoute.Wildcard == true {
+						if ingress.AlternativeNames != nil && *newRoute.Wildcard {
 							return fmt.Errorf("Route %s has wildcard: true and alternativenames defined, this is not supported", newRoute.Domain)
 						}
 						newRoute.IngressName = fmt.Sprintf("wildcard-%s", newRoute.Domain)
@@ -219,9 +219,9 @@ func GenerateRoutesV2(yamlRoutes *RoutesV2, routeMap map[string][]Route, variabl
 				newRoute.IngressName = lagoonRoute.Name
 			}
 			// generate the fastly configuration for this route
-			err := GenerateFastlyConfiguration(&newRoute.Fastly, "", newRoute.Fastly.ServiceID, newRoute.Domain, secretPrefix, variables)
+			err := GenerateFastlyConfiguration(&newRoute.Fastly, "", newRoute.Fastly.ServiceID, newRoute.Domain, variables)
 			if err != nil {
-				//@TODO: error handling
+				return err
 			}
 
 			// validate the domain earlier and fail if it is invalid
@@ -235,7 +235,7 @@ func GenerateRoutesV2(yamlRoutes *RoutesV2, routeMap map[string][]Route, variabl
 }
 
 // MergeRoutesV2 merge routes from the API onto the previously generated routes.
-func MergeRoutesV2(yamlRoutes RoutesV2, apiRoutes RoutesV2, variables []EnvironmentVariable, defaultIngressClass, secretPrefix string) (RoutesV2, error) {
+func MergeRoutesV2(yamlRoutes RoutesV2, apiRoutes RoutesV2, variables []EnvironmentVariable, defaultIngressClass string) (RoutesV2, error) {
 	firstRoundRoutes := RoutesV2{}
 	existsInAPI := false
 	// replace any routes from the lagoon yaml with ones from the api
@@ -298,7 +298,7 @@ func MergeRoutesV2(yamlRoutes RoutesV2, apiRoutes RoutesV2, variables []Environm
 	finalRoutes := RoutesV2{}
 	for _, fRoute := range firstRoundRoutes.Routes {
 		// generate the fastly configuration for this route if required
-		err := GenerateFastlyConfiguration(&fRoute.Fastly, "", fRoute.Fastly.ServiceID, fRoute.Domain, secretPrefix, variables)
+		err := GenerateFastlyConfiguration(&fRoute.Fastly, "", fRoute.Fastly.ServiceID, fRoute.Domain, variables)
 		if err != nil {
 			//@TODO: error handling
 		}
@@ -364,10 +364,10 @@ func handleAPIRoute(defaultIngressClass string, apiRoute RouteV2) (RouteV2, erro
 	// handle wildcards
 	if apiRoute.Wildcard != nil {
 		routeAdd.Wildcard = apiRoute.Wildcard
-		if *routeAdd.TLSAcme == true && *routeAdd.Wildcard == true {
+		if *routeAdd.TLSAcme && *routeAdd.Wildcard {
 			return routeAdd, fmt.Errorf("Route %s has wildcard=true and tls-acme=true, this is not supported", routeAdd.Domain)
 		}
-		if apiRoute.AlternativeNames != nil && *routeAdd.Wildcard == true {
+		if apiRoute.AlternativeNames != nil && *routeAdd.Wildcard {
 			return routeAdd, fmt.Errorf("Route %s has wildcard=true and alternativenames defined, this is not supported", routeAdd.Domain)
 		}
 		apiRoute.IngressName = fmt.Sprintf("wildcard-%s", apiRoute.Domain)
