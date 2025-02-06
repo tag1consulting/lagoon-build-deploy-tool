@@ -255,11 +255,38 @@ dccExit2=$?
 if [ "${dccExit2}" != "0" ]; then
   ((++DOCKER_COMPOSE_WARNING_COUNT))
   if [ "${dccExit}" == "0" ]; then
+
+    # this logic is to phase rollout of https://github.com/uselagoon/build-deploy-tool/pull/304
+    # anything returned by this section will be a yaml error that we need to check if the feature to enable/disable errors
+    # is configured, and that the environment type matches.
+    # eventually this logic will be changed entirely from warnings to errors
+    DOCKER_COMPOSE_VALIDATION_ERROR=false
+    DOCKER_COMPOSE_VALIDATION_ERROR_VARIABLE=LAGOON_FEATURE_FLAG_DEVELOPMENT_DOCKER_COMPOSE_VALIDATION
+    # this logic will make development environments return an error by default
+    # adding LAGOON_FEATURE_FLAG_DEVELOPMENT_DOCKER_COMPOSE_VALIDATION=disabled can be used to disable the error and revert to a warning per project or environment
+    # or add LAGOON_FEATURE_FLAG_DEFAULT_DEVELOPMENT_DOCKER_COMPOSE_VALIDATION=disabled to the remote-controller as a default to disable for a cluster
+    if [[ "$(featureFlag DEVELOPMENT_DOCKER_COMPOSE_VALIDATION)" != disabled ]] && [[ "$ENVIRONMENT_TYPE" == "development" ]]; then
+      DOCKER_COMPOSE_VALIDATION_ERROR=true
+    fi
+    # by default, production environments won't return an error unless the feature flag is enabled.
+    # this allows using the feature flag to selectively apply to production environments if required
+    # adding LAGOON_FEATURE_FLAG_PRODUCTION_DOCKER_COMPOSE_VALIDATION=enabled can be used to enable the error per project or environment
+    # or add LAGOON_FEATURE_FLAG_DEFAULT_PRODUCTION_DOCKER_COMPOSE_VALIDATION=enabled to the remote-controller as a default to disable for a cluster
+    if [[ "$(featureFlag PRODUCTION_DOCKER_COMPOSE_VALIDATION)" = enabled ]] && [[ "$ENVIRONMENT_TYPE" == "production" ]]; then
+      DOCKER_COMPOSE_VALIDATION_ERROR=true
+    DOCKER_COMPOSE_VALIDATION_ERROR_VARIABLE=LAGOON_FEATURE_FLAG_PRODUCTION_DOCKER_COMPOSE_VALIDATION
+    fi
+
     ((++BUILD_WARNING_COUNT))
     echo "
-##############################################
-Warning!
-There are issues with your docker compose file that lagoon uses that should be fixed.
+##############################################"
+    if [[ "$DOCKER_COMPOSE_VALIDATION_ERROR" == "true" ]]; then
+      echo "Error!"
+    else
+      echo "Warning!"
+    fi
+
+    echo "There are issues with your docker compose file that lagoon uses that should be fixed.
 You can run docker compose config locally to check that your docker-compose file is valid.
 "
   fi
@@ -269,7 +296,7 @@ You can run docker compose config locally to check that your docker-compose file
 fi
 
 if [[ "$DOCKER_COMPOSE_WARNING_COUNT" -gt 0 ]]; then
-  echo "Read the docs for more on errors displayed here https://docs.lagoon.sh/lagoon-build-errors
+  echo "Read the docs for more on errors displayed here ${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/lagoon-build-errors
 "
   echo "##############################################"
   currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
@@ -279,6 +306,16 @@ else
   currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
   patchBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "dockerComposeValidation" "Docker Compose Validation" "false"
   previousStepEnd=${currentStepEnd}
+fi
+
+
+if [[ "$DOCKER_COMPOSE_VALIDATION_ERROR" == "true" ]]; then
+  # drop the exit here if this should be an error
+  echo "> You can instruct Lagoon to change this to a warning by setting the following variable"
+  echo "> '${DOCKER_COMPOSE_VALIDATION_ERROR_VARIABLE}=disabled' as a GLOBAL scoped variable to this environment or project."
+  echo "> A future release of Lagoon will not be able to change this error."
+  echo "> You should correct the issue as soon as possible to prevent future build failures."
+  exit 1
 fi
 
 beginBuildStep ".lagoon.yml Validation" "lagoonYmlValidation"
@@ -298,7 +335,7 @@ if [ "${lyvExit}" != "0" ]; then
 Warning!
 There are issues with your .lagoon.yml file that must be fixed.
 Refer to the .lagoon.yml docs for the correct syntax
-https://docs.lagoon.sh/using-lagoon-the-basics/lagoon-yml/
+${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/using-lagoon-the-basics/lagoon-yml/
 ##############################################
 "
   echo "${lyvOutput}"
@@ -311,7 +348,7 @@ set -e
 # Validate .lagoon.yml only, no overrides. lagoon-linter still has checks that
 # aren't in build-deploy-tool.
 if ! lagoon-linter; then
-	echo "https://docs.lagoon.sh/lagoon/using-lagoon-the-basics/lagoon-yml#restrictions describes some possible reasons for this build failure."
+	echo "${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/lagoon/using-lagoon-the-basics/lagoon-yml#restrictions describes some possible reasons for this build failure."
 	echo "If you require assistance to fix this error, please contact support."
 	exit 1
 else
@@ -377,12 +414,6 @@ declare -A IMAGES_PROMOTE
 # this array stores the hashes of the built images
 declare -A IMAGE_HASHES
 
-HELM_ARGUMENTS=()
-. /kubectl-build-deploy/scripts/kubectl-get-cluster-capabilities.sh
-for CAPABILITIES in "${CAPABILITIES[@]}"; do
-  HELM_ARGUMENTS+=(-a "${CAPABILITIES}")
-done
-
 # Allow the servicetype be overridden by the lagoon API
 # This accepts colon separated values like so `SERVICE_NAME:SERVICE_TYPE_OVERRIDE`, and multiple overrides
 # separated by commas
@@ -447,11 +478,9 @@ do
     SERVICE_TYPE="python"
   fi
 
-  if [[ "${CAPABILITIES[@]}" =~ "backup.appuio.ch/v1alpha1/PreBackupPod" ]]; then
-    if [[ "$SERVICE_TYPE" == "opensearch" ]] || [[ "$SERVICE_TYPE" == "elasticsearch" ]]; then
-      if kubectl -n ${NAMESPACE} get prebackuppods.backup.appuio.ch "${SERVICE_NAME}-prebackuppod" &> /dev/null; then
-        kubectl -n ${NAMESPACE} delete prebackuppods.backup.appuio.ch "${SERVICE_NAME}-prebackuppod"
-      fi
+  if [[ "$SERVICE_TYPE" == "opensearch" ]] || [[ "$SERVICE_TYPE" == "elasticsearch" ]]; then
+    if kubectl -n ${NAMESPACE} get prebackuppods.backup.appuio.ch "${SERVICE_NAME}-prebackuppod" &> /dev/null; then
+      kubectl -n ${NAMESPACE} delete prebackuppods.backup.appuio.ch "${SERVICE_NAME}-prebackuppod"
     fi
   fi
 
@@ -687,22 +716,6 @@ done
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 patchBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "imageBuildComplete" "Image Builds" "false"
 previousStepEnd=${currentStepEnd}
-beginBuildStep "Pre-Rollout Tasks" "runningPreRolloutTasks"
-
-##############################################
-### RUN PRE-ROLLOUT tasks defined in .lagoon.yml
-##############################################
-
-if [ "${LAGOON_PREROLLOUT_DISABLED}" != "true" ]; then
-    build-deploy-tool tasks pre-rollout
-else
-  echo "pre-rollout tasks are currently disabled LAGOON_PREROLLOUT_DISABLED is set to true"
-  currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
-  patchBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "preRolloutsCompleted" "Pre-Rollout Tasks" "false"
-fi
-
-currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
-previousStepEnd=${currentStepEnd}
 beginBuildStep "Service Configuration Phase 1" "serviceConfigurationPhase1"
 
 ##############################################
@@ -781,109 +794,6 @@ currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 patchBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "serviceConfigurationComplete" "Service Configuration Phase 1" "false"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Service Configuration Phase 2" "serviceConfigurationPhase2"
-
-##############################################
-### CUSTOM FASTLY API SECRETS .lagoon.yml
-##############################################
-
-# if a customer is using their own fastly configuration, then they can define their api token and platform tls configuration ID in the .lagoon.yml file
-# this will get created as a `kind: Secret` in kubernetes so that created ingresses will be able to use this secret to talk to the fastly api.
-#
-# in this example, the customer needs to add a build envvar called `FASTLY_API_TOKEN` and then populates the .lagoon.yml file with something like this
-#
-# fastly:
-#   api-secrets:
-#     - name: customer
-#       apiTokenVariableName: FASTLY_API_TOKEN
-#       platformTLSConfiguration: A1bcEdFgH12eD242Sds
-#
-# then the build process will attempt to check the lagoon variables for one called `FASTLY_API_TOKEN` and will use the value of this variable when creating the
-# `kind: Secret` in kubernetes
-#
-# support for multiple api-secrets is possible in the instance that a customer uses 2 separate services in different accounts in the one project
-
-## any fastly api secrets will be prefixed with this, so that we always add this to whatever the customer provides
-FASTLY_API_SECRET_PREFIX="fastly-api-"
-
-FASTLY_API_SECRETS_COUNTER=0
-FASTLY_API_SECRETS=()
-if [ -n "$(cat .lagoon.yml | shyaml keys fastly.api-secrets.$FASTLY_API_SECRETS_COUNTER 2> /dev/null)" ]; then
-  while [ -n "$(cat .lagoon.yml | shyaml get-value fastly.api-secrets.$FASTLY_API_SECRETS_COUNTER 2> /dev/null)" ]; do
-    FASTLY_API_SECRET_NAME=$FASTLY_API_SECRET_PREFIX$(cat .lagoon.yml | shyaml get-value fastly.api-secrets.$FASTLY_API_SECRETS_COUNTER.name 2> /dev/null)
-    if [ -z "$FASTLY_API_SECRET_NAME" ]; then
-        echo -e "A fastly api secret was defined in the .lagoon.yml file, but no name could be found the .lagoon.yml\n\nPlease check if the name has been set correctly."
-        exit 1
-    fi
-    FASTLY_API_TOKEN_VALUE=$(cat .lagoon.yml | shyaml get-value fastly.api-secrets.$FASTLY_API_SECRETS_COUNTER.apiTokenVariableName false)
-    if [[ $FASTLY_API_TOKEN_VALUE == "false" ]]; then
-      echo "No 'apiTokenVariableName' defined for fastly secret $FASTLY_API_SECRET_NAME"; exit 1;
-    fi
-    # if we have everything we need, we can proceed to logging in
-    if [ $FASTLY_API_TOKEN_VALUE != "false" ]; then
-      FASTLY_API_TOKEN=""
-      # check if we have a password defined anywhere in the api first
-      if [ ! -z "$LAGOON_PROJECT_VARIABLES" ]; then
-        FASTLY_API_TOKEN=($(echo $LAGOON_PROJECT_VARIABLES | jq -r '.[] | select(.scope == "build" and .name == "'$FASTLY_API_TOKEN_VALUE'") | "\(.value)"'))
-      fi
-      if [ ! -z "$LAGOON_ENVIRONMENT_VARIABLES" ]; then
-        TEMP_FASTLY_API_TOKEN=($(echo $LAGOON_ENVIRONMENT_VARIABLES | jq -r '.[] | select(.scope == "build" and .name == "'$FASTLY_API_TOKEN_VALUE'") | "\(.value)"'))
-        if [ ! -z "$TEMP_FASTLY_API_TOKEN" ]; then
-          FASTLY_API_TOKEN=$TEMP_FASTLY_API_TOKEN
-        fi
-      fi
-      if [ -z "$FASTLY_API_TOKEN" ]; then
-        echo -e "A fastly api secret was defined in the .lagoon.yml file, but no token could be found in the Lagoon API matching the variable name provided\n\nPlease check if the token has been set correctly."
-        exit 1
-      fi
-    fi
-    FASTLY_API_PLATFORMTLS_CONFIGURATION=$(cat .lagoon.yml | shyaml get-value fastly.api-secrets.$FASTLY_API_SECRETS_COUNTER.platformTLSConfiguration "")
-    if [ -z "$FASTLY_API_PLATFORMTLS_CONFIGURATION" ]; then
-      echo -e "A fastly api secret was defined in the .lagoon.yml file, but no platform tls configuration id could be found in the .lagoon.yml\n\nPlease check if the platform tls configuration id has been set correctly."
-      exit 1
-    fi
-
-    # run the script to create the secrets
-    . /kubectl-build-deploy/scripts/exec-fastly-api-secrets.sh
-
-    let FASTLY_API_SECRETS_COUNTER=FASTLY_API_SECRETS_COUNTER+1
-  done
-fi
-
-# FASTLY API SECRETS FROM LAGOON API VARIABLE
-# Allow for defining fastly api secrets using lagoon api variables
-# This accepts colon separated values like so `SECRET_NAME:FASTLY_API_TOKEN:FASTLY_PLATFORMTLS_CONFIGURATION_ID`, and multiple overrides
-# separated by commas
-# Example 1: examplecom:x1s8asfafasf7ssf:fa23rsdgsdgas
-# ^^^ will create a kubernetes secret called `$FASTLY_API_SECRET_PREFIX-examplecom` with 2 data fields (one for api token, the other for platform tls id)
-# populated with `x1s8asfafasf7ssf` and `fa23rsdgsdgas` for whichever field it should be
-# and the name will get created with the prefix defined in `FASTLY_API_SECRET_PREFIX`
-# Example 2: examplecom:x1s8asfafasf7ssf:fa23rsdgsdgas,example2com:fa23rsdgsdgas:x1s8asfafasf7ssf,example3com:fa23rsdgsdgas:x1s8asfafasf7ssf:example3com
-if [ ! -z "$LAGOON_PROJECT_VARIABLES" ]; then
-  LAGOON_FASTLY_API_SECRETS=($(echo $LAGOON_PROJECT_VARIABLES | jq -r '.[] | select(.name == "LAGOON_FASTLY_API_SECRETS") | "\(.value)"'))
-fi
-if [ ! -z "$LAGOON_ENVIRONMENT_VARIABLES" ]; then
-  TEMP_LAGOON_FASTLY_API_SECRETS=($(echo $LAGOON_ENVIRONMENT_VARIABLES | jq -r '.[] | select(.name == "LAGOON_FASTLY_API_SECRETS") | "\(.value)"'))
-  if [ ! -z $TEMP_LAGOON_FASTLY_API_SECRETS ]; then
-    LAGOON_FASTLY_API_SECRETS=$TEMP_LAGOON_FASTLY_API_SECRETS
-  fi
-fi
-if [ ! -z "$LAGOON_FASTLY_API_SECRETS" ]; then
-  IFS=',' read -ra LAGOON_FASTLY_API_SECRETS_SPLIT <<< "$LAGOON_FASTLY_API_SECRETS"
-  for LAGOON_FASTLY_API_SECRETS_DATA in "${LAGOON_FASTLY_API_SECRETS_SPLIT[@]}"
-  do
-    IFS=':' read -ra LAGOON_FASTLY_API_SECRET_SPLIT <<< "$LAGOON_FASTLY_API_SECRETS_DATA"
-    if [ -z "${LAGOON_FASTLY_API_SECRET_SPLIT[0]}" ] || [ -z "${LAGOON_FASTLY_API_SECRET_SPLIT[1]}" ] || [ -z "${LAGOON_FASTLY_API_SECRET_SPLIT[2]}" ]; then
-      echo -e "An override was defined in the lagoon API with LAGOON_FASTLY_API_SECRETS but was not structured correctly, the format should be NAME:FASTLY_API_TOKEN:FASTLY_PLATFORMTLS_CONFIGURATION_ID and comma separated for multiples"
-      exit 1
-    fi
-    # the fastly api secret name will be created with the prefix that is defined above
-    FASTLY_API_SECRET_NAME=$FASTLY_API_SECRET_PREFIX${LAGOON_FASTLY_API_SECRET_SPLIT[0]}
-    FASTLY_API_TOKEN=${LAGOON_FASTLY_API_SECRET_SPLIT[1]}
-    FASTLY_API_PLATFORMTLS_CONFIGURATION=${LAGOON_FASTLY_API_SECRET_SPLIT[2]}
-    # run the script to create the secrets
-    . /kubectl-build-deploy/scripts/exec-fastly-api-secrets.sh
-  done
-fi
 
 # FASTLY SERVICE ID PER INGRESS OVERRIDE FROM LAGOON API VARIABLE
 # Allow the fastly serviceid for specific ingress to be overridden by the lagoon API
@@ -1119,7 +1029,7 @@ if [ "${CURRENT_CHALLENGE_ROUTES[@]}" != "" ]; then
   echo ">> Lagoon detected routes that have stale acme certificate challenges."
   echo "  This indicates that the routes have not generated the certificate for some reason."
   echo "  You may need to verify that the DNS or configuration is correct for the hosting provider."
-  echo "  https://docs.lagoon.sh/using-lagoon-the-basics/going-live/#routes-ssl"
+  echo "  ${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/using-lagoon-the-basics/going-live/#routes-ssl"
   echo "  Depending on your going live instructions from your hosting provider, you may need to make adjustments to your .lagoon.yml file"
   echo "  Otherwise, If you no longer need these routes, you should remove them from your .lagoon.yml file."
   echo ""
@@ -1414,7 +1324,7 @@ if [ "${DEPRECATED_IMAGE_WARNINGS}" == "true" ]; then
   echo "  This indicates that an image you're using in the build has been flagged as deprecated."
   echo "  You should stop using these images as soon as possible."
   echo "  If the deprecated image has a suggested replacement, it will be mentioned in the warning."
-  echo "  Please visit https://docs.lagoon.sh/deprecated-images for more information."
+  echo "  Please visit ${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/deprecated-images for more information."
   echo ""
   for IMAGE_NAME in "${!DEPRECATED_IMAGE_NAME[@]}"
   do
@@ -1453,7 +1363,7 @@ if [ ! "$BACKUPS_DISABLED" == true ]; then
   mkdir -p $LAGOON_BACKUP_YAML_FOLDER
   if [ "$(featureFlag K8UP_V2)" = enabled ]; then
   # build-tool doesn't do any capability checks yet, so do this for now
-    if [[ "${CAPABILITIES[@]}" =~ "k8up.io/v1/Schedule" ]]; then
+    if kubectl -n ${NAMESPACE} get schedule.k8up.io &> /dev/null; then
     echo "Backups: generating k8up.io/v1 resources"
       if ! kubectl --insecure-skip-tls-verify -n ${NAMESPACE} get secret baas-repo-pw &> /dev/null; then
         # Create baas-repo-pw secret based on the project secret
@@ -1461,7 +1371,7 @@ if [ ! "$BACKUPS_DISABLED" == true ]; then
       fi
       build-deploy-tool template backup-schedule --version v2 --saved-templates-path ${LAGOON_BACKUP_YAML_FOLDER}
       # check if the existing schedule exists, and delete it
-      if [[ "${CAPABILITIES[@]}" =~ "backup.appuio.ch/v1alpha1/Schedule" ]]; then
+      if kubectl -n ${NAMESPACE} get schedule.backup.appuio.ch &> /dev/null; then
         if kubectl --insecure-skip-tls-verify -n ${NAMESPACE} get schedules.backup.appuio.ch k8up-lagoon-backup-schedule &> /dev/null; then
           echo "Backups: removing old backup.appuio.ch/v1alpha1 schedule"
           kubectl --insecure-skip-tls-verify -n ${NAMESPACE} delete schedules.backup.appuio.ch k8up-lagoon-backup-schedule
@@ -1474,13 +1384,15 @@ if [ ! "$BACKUPS_DISABLED" == true ]; then
       K8UP_VERSION="v2"
     fi
   fi
-  if [[ "${CAPABILITIES[@]}" =~ "backup.appuio.ch/v1alpha1/Schedule" ]] && [[ "$K8UP_VERSION" != "v2" ]]; then
-    echo "Backups: generating backup.appuio.ch/v1alpha1 resources"
-    if ! kubectl --insecure-skip-tls-verify -n ${NAMESPACE} get secret baas-repo-pw &> /dev/null; then
-      # Create baas-repo-pw secret based on the project secret
-      kubectl --insecure-skip-tls-verify -n ${NAMESPACE} create secret generic baas-repo-pw --from-literal=repo-pw=$(echo -n "${PROJECT_SECRET}-BAAS-REPO-PW" | sha256sum | cut -d " " -f 1)
+  if [[ "$K8UP_VERSION" != "v2" ]]; then
+    if kubectl -n ${NAMESPACE} get schedule.backup.appuio.ch &> /dev/null; then
+      echo "Backups: generating backup.appuio.ch/v1alpha1 resources"
+      if ! kubectl --insecure-skip-tls-verify -n ${NAMESPACE} get secret baas-repo-pw &> /dev/null; then
+        # Create baas-repo-pw secret based on the project secret
+        kubectl --insecure-skip-tls-verify -n ${NAMESPACE} create secret generic baas-repo-pw --from-literal=repo-pw=$(echo -n "${PROJECT_SECRET}-BAAS-REPO-PW" | sha256sum | cut -d " " -f 1)
+      fi
+      build-deploy-tool template backup-schedule --version v1 --saved-templates-path ${LAGOON_BACKUP_YAML_FOLDER}
     fi
-    build-deploy-tool template backup-schedule --version v1 --saved-templates-path ${LAGOON_BACKUP_YAML_FOLDER}
   fi
   # apply backup templates
   if [ -n "$(ls -A $LAGOON_BACKUP_YAML_FOLDER/ 2>/dev/null)" ]; then
@@ -1493,6 +1405,22 @@ fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 patchBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "backupConfigurationComplete" "Backup Configuration" "false"
+previousStepEnd=${currentStepEnd}
+beginBuildStep "Pre-Rollout Tasks" "runningPreRolloutTasks"
+
+##############################################
+### RUN PRE-ROLLOUT tasks defined in .lagoon.yml
+##############################################
+
+if [ "${LAGOON_PREROLLOUT_DISABLED}" != "true" ]; then
+    build-deploy-tool tasks pre-rollout
+else
+  echo "pre-rollout tasks are currently disabled LAGOON_PREROLLOUT_DISABLED is set to true"
+  currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
+  patchBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "preRolloutsCompleted" "Pre-Rollout Tasks" "false"
+fi
+
+currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Deployment Templating" "templatingDeployments"
 
@@ -1690,8 +1618,10 @@ for TLS_FALSE_INGRESS in $TLS_FALSE_INGRESSES; do
   for TLS_SECRET in $TLS_SECRETS; do
     echo ">> Cleaning up certificate for ${TLS_SECRET} as tls-acme is set to false"
     # check if it is a lets encrypt certificate
-    if openssl x509 -in <(kubectl -n ${NAMESPACE} get secret ${TLS_SECRET}-tls -o json | jq -r '.data."tls.crt" | @base64d') -text -noout | grep -o -q "Let's Encrypt" &> /dev/null; then
-      kubectl -n ${NAMESPACE} delete secret ${TLS_SECRET}-tls
+    if kubectl -n ${NAMESPACE} get secret ${TLS_SECRET} &> /dev/null; then
+      if openssl x509 -in <(kubectl -n ${NAMESPACE} get secret ${TLS_SECRET} -o json | jq -r '.data."tls.crt" | @base64d') -text -noout | grep -o -q "Let's Encrypt" &> /dev/null; then
+        kubectl -n ${NAMESPACE} delete secret ${TLS_SECRET}
+      fi
     fi
     if kubectl -n ${NAMESPACE} get certificates.cert-manager.io ${TLS_SECRET} &> /dev/null; then
       kubectl -n ${NAMESPACE} delete certificates.cert-manager.io ${TLS_SECRET}

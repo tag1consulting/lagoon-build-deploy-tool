@@ -38,7 +38,6 @@ type BuildValues struct {
 	PrivateRegistryURLS           []string                     `json:"privateRegistryURLS" description:"this stores all the private registry urls used by this environment"`
 	Fastly                        Fastly                       `json:"fastly" deprecated:"true" description:"this is the configuration of fastly for this environment"`
 	FastlyCacheNoCache            string                       `json:"fastlyCacheNoCahce" deprecated:"true" description:"this is the service id of a fastly cache-no-cache service"`
-	FastlyAPISecretPrefix         string                       `json:"fastlyAPISecretPrefix" deprecated:"true" description:"this is the fastly-api-secret prefix to use"`
 	ConfigMapSha                  string                       `json:"configMapSha" description:"this is the computed sha of the lagoon-env configmap, it is used to determine if changes are required to deployments"`
 	Route                         string                       `json:"route" description:"this stores the primary determiend route after all have been calculated"`
 	Routes                        []string                     `json:"routes" description:"this stores all routes after they are calculated"`
@@ -82,7 +81,7 @@ type BuildValues struct {
 	SSHPrivateKey                 string                       `json:"sshPrivateKey"`
 	ForcePullImages               []string                     `json:"forcePullImages"`
 	Volumes                       []ComposeVolume              `json:"volumes,omitempty" description:"stores any additional persistent volume definitions"`
-	PodAntiAffinity               bool                         `json:"podAntiAffinity"`
+	PodSpreadConstraints          bool                         `json:"podSpreadConstraints"`
 }
 
 type Resources struct {
@@ -203,6 +202,7 @@ type ServiceValues struct {
 	IsDBaaS                                bool                    `json:"isDBaaS"`
 	IsSingle                               bool                    `json:"isSingle"`
 	AdditionalVolumes                      []ServiceVolume         `json:"additonalVolumes,omitempty"`
+	CreateDefaultVolume                    bool                    `json:"createDefaultVolume"`
 	Resources                              Resources               `json:"resources,omitempty"`
 }
 

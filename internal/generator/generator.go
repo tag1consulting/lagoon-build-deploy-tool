@@ -48,7 +48,6 @@ type GeneratorInput struct {
 	MonitoringContact          string
 	MonitoringStatusPageID     string
 	FastlyCacheNoCahce         string
-	FastlyAPISecretPrefix      string
 	SavedTemplatesPath         string
 	ConfigMapSha               string
 	BackupConfiguration        BackupConfiguration
@@ -97,7 +96,6 @@ func NewGenerator(
 	activeEnvironment := helpers.GetEnv("ACTIVE_ENVIRONMENT", generator.ActiveEnvironment, generator.Debug)
 	standbyEnvironment := helpers.GetEnv("STANDBY_ENVIRONMENT", generator.StandbyEnvironment, generator.Debug)
 	fastlyCacheNoCahce := helpers.GetEnv("LAGOON_FASTLY_NOCACHE_SERVICE_ID", generator.FastlyCacheNoCahce, generator.Debug)
-	fastlyAPISecretPrefix := helpers.GetEnv("ROUTE_FASTLY_SERVICE_ID", generator.FastlyAPISecretPrefix, generator.Debug)
 	lagoonVersion := helpers.GetEnv("LAGOON_VERSION", generator.LagoonVersion, generator.Debug)
 	configMapSha := helpers.GetEnv("CONFIG_MAP_SHA", generator.ConfigMapSha, generator.Debug)
 	imageRegistry := helpers.GetEnv("REGISTRY", generator.ImageRegistry, generator.Debug)
@@ -174,7 +172,6 @@ func NewGenerator(
 	buildValues.ActiveEnvironment = activeEnvironment
 	buildValues.StandbyEnvironment = standbyEnvironment
 	buildValues.FastlyCacheNoCache = fastlyCacheNoCahce
-	buildValues.FastlyAPISecretPrefix = fastlyAPISecretPrefix
 	switch buildType {
 	case "branch", "promote":
 		buildValues.Branch = branch
@@ -271,9 +268,9 @@ func NewGenerator(
 	}
 
 	// feature to enable pod antiaffinity on deployments
-	podAntiAffinity := CheckFeatureFlag("POD_SPREADCONSTRAINTS", buildValues.EnvironmentVariables, false)
-	if podAntiAffinity == "enabled" {
-		buildValues.PodAntiAffinity = true
+	podSpreadConstraints := CheckFeatureFlag("POD_SPREADCONSTRAINTS", buildValues.EnvironmentVariables, false)
+	if podSpreadConstraints == "enabled" {
+		buildValues.PodSpreadConstraints = true
 	}
 
 	// check for readwritemany to readwriteonce flag, disabled by default
@@ -362,7 +359,12 @@ func NewGenerator(
 		bk, _ := strconv.ParseBool(dockerBuildKit.Value)
 		buildValues.DockerBuildKit = &bk
 	} else {
-		buildValues.DockerBuildKit = helpers.BoolPtr(true)
+		lffDockerbuildkit := CheckFeatureFlag("DOCKER_BUILDKIT", buildValues.EnvironmentVariables, false)
+		if lffDockerbuildkit == "disabled" {
+			buildValues.DockerBuildKit = helpers.BoolPtr(false)
+		} else {
+			buildValues.DockerBuildKit = helpers.BoolPtr(true)
+		}
 	}
 
 	// get any lagoon service type overrides
@@ -418,6 +420,12 @@ func NewGenerator(
 		build values should be calculated as much as possible before being passed to the generate services function
 	*/
 	err = generateServicesFromDockerCompose(&buildValues, generator.IgnoreNonStringKeyErrors, generator.IgnoreMissingEnvFiles, generator.Debug)
+	if err != nil {
+		return nil, err
+	}
+
+	// strip out duplicate default volumes
+	err = flagDefaultVolumeCreation(&buildValues)
 	if err != nil {
 		return nil, err
 	}

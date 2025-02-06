@@ -34,6 +34,8 @@ type ServiceContainer struct {
 	VolumeMounts []corev1.VolumeMount
 	Command      []string
 	FeatureFlags map[string]bool
+	// define additional variables here, this can be used by types that inherit from another type
+	EnvVars []corev1.EnvVar
 }
 
 type ServiceVolume struct {
@@ -61,6 +63,7 @@ type ServicePorts struct {
 var ServiceTypes = map[string]ServiceType{
 	"basic":                basic,
 	"basic-persistent":     basicPersistent,
+	"basic-single":         basicSingle,
 	"cli":                  cli,
 	"cli-persistent":       cliPersistent,
 	"elasticsearch":        elasticsearch,
@@ -80,6 +83,8 @@ var ServiceTypes = map[string]ServiceType{
 	"varnish":              varnish,
 	"varnish-persistent":   varnishPersistent,
 	"solr":                 solr,
+	"valkey":               valkey,
+	"valkey-persistent":    valkeyPersistent,
 	"worker":               worker,
 	"worker-persistent":    workerPersistent,
 	"rabbitmq":             rabbitmq,

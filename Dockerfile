@@ -10,7 +10,12 @@ RUN go install github.com/a8m/envsubst/cmd/envsubst@v1.4.2
 
 WORKDIR /app
 
-COPY . ./
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+COPY main.go main.go
+COPY cmd/ cmd/
+COPY internal/ internal/
 
 ARG BUILD
 ARG GO_VER
@@ -100,10 +105,9 @@ COPY legacy/build-deploy-docker-compose.sh /kubectl-build-deploy/build-deploy-do
 
 COPY legacy/scripts /kubectl-build-deploy/scripts
 
-COPY legacy/helmcharts  /kubectl-build-deploy/helmcharts
-
 ENV DBAAS_OPERATOR_HTTP=dbaas.lagoon.svc:5000
 ENV DOCKER_HOST=docker-host.lagoon.svc
+ENV LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL=https://docs.lagoon.sh
 
 RUN architecture=$(case $(uname -m) in x86_64 | amd64) echo "amd64" ;; aarch64 | arm64 | armv8) echo "arm64" ;; *) echo "amd64" ;; esac) \
     && curl -sSL https://github.com/uselagoon/lagoon-linter/releases/download/v0.8.0/lagoon-linter_0.8.0_linux_${architecture}.tar.gz \

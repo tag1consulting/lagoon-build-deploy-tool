@@ -173,6 +173,47 @@ func TestTemplateLagoonServices(t *testing.T) {
 			want:         "internal/testdata/complex/service-templates/test2c-nginx-php",
 		},
 		{
+			name:        "test2d-nginx-php",
+			description: "tests an nginx-php deployment with admin resource overrides",
+			args: testdata.GetSeedData(
+				testdata.TestData{
+					ProjectName:     "example-project",
+					EnvironmentName: "main",
+					Branch:          "main",
+					LagoonYAML:      "internal/testdata/complex/lagoon.varnish.yml",
+					ImageReferences: map[string]string{
+						"nginx":   "harbor.example/example-project/main/nginx@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"php":     "harbor.example/example-project/main/php@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"cli":     "harbor.example/example-project/main/cli@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"redis":   "harbor.example/example-project/main/redis@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"varnish": "harbor.example/example-project/main/varnish@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+					},
+					BuildPodVariables: []helpers.EnvironmentVariable{
+						{
+							Name:  "ADMIN_LAGOON_FEATURE_FLAG_CONTAINER_MEMORY_LIMIT",
+							Value: "16Gi",
+						},
+						{
+							Name:  "ADMIN_LAGOON_FEATURE_FLAG_EPHEMERAL_STORAGE_LIMIT",
+							Value: "160Gi",
+						},
+						{
+							Name:  "ADMIN_LAGOON_FEATURE_FLAG_EPHEMERAL_STORAGE_REQUESTS",
+							Value: "1Gi",
+						},
+					},
+					ProjectVariables: []lagoon.EnvironmentVariable{
+						{
+							Name:  "LAGOON_FEATURE_FLAG_ROOTLESS_WORKLOAD",
+							Value: "enabled",
+							Scope: "build",
+						},
+					},
+				}, true),
+			templatePath: "testoutput",
+			want:         "internal/testdata/complex/service-templates/test2d-nginx-php",
+		},
+		{
 			name:        "test3-funky-pvcs",
 			description: "only create pvcs of the requested persistent-name in the docker-compose file",
 			args: testdata.GetSeedData(
@@ -479,6 +520,68 @@ func TestTemplateLagoonServices(t *testing.T) {
 				}, true),
 			templatePath: "testoutput",
 			want:         "internal/testdata/basic/service-templates/test-basic-spot-affinity",
+		},
+		{
+			name:        "test-basic-persistent-name",
+			description: "tests a basic deployment with a persistent name",
+			args: testdata.GetSeedData(
+				testdata.TestData{
+					ProjectName:     "example-project",
+					EnvironmentName: "main",
+					Branch:          "main",
+					LagoonYAML:      "internal/testdata/basic/lagoon.persistent-name.yml",
+					ImageReferences: map[string]string{
+						"basic": "harbor.example/example-project/main/basic@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+					},
+				}, true),
+			templatePath: "testoutput",
+			want:         "internal/testdata/basic/service-templates/test-basic-persistent-name",
+		},
+		{
+			name:        "test-basic-persistent-names",
+			description: "tests a basic deployment with two services with persistent name",
+			args: testdata.GetSeedData(
+				testdata.TestData{
+					ProjectName:     "example-project",
+					EnvironmentName: "main",
+					Branch:          "main",
+					LagoonYAML:      "internal/testdata/basic/lagoon.persistent-name-2.yml",
+					ImageReferences: map[string]string{
+						"basic":  "harbor.example/example-project/main/basic@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"basic2": "harbor.example/example-project/main/basic2@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+					},
+				}, true),
+			templatePath: "testoutput",
+			want:         "internal/testdata/basic/service-templates/test-basic-persistent-names",
+		},
+		{
+			name:        "test-complex-persistent-names",
+			description: "tests a complex deployment with two services with persistent name",
+			args: testdata.GetSeedData(
+				testdata.TestData{
+					ProjectName:     "example-project",
+					EnvironmentName: "main",
+					Branch:          "main",
+					LagoonYAML:      "internal/testdata/complex/lagoon.persistent-name.yml",
+					ImageReferences: map[string]string{
+						"cli":                           "harbor.example/example-project/main/cli@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"gotenberg":                     "harbor.example/example-project/main/gotenberg@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"nginx":                         "harbor.example/example-project/main/nginx@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"opensearch":                    "harbor.example/example-project/main/opensearch@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"php":                           "harbor.example/example-project/main/php@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"rabbitmq":                      "harbor.example/example-project/main/rabbitmq@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"redis":                         "harbor.example/example-project/main/redis@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"redis-persist":                 "harbor.example/example-project/main/redis-persist@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"redis-session":                 "harbor.example/example-project/main/redis-session@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"queue-worker-entity-index":     "harbor.example/example-project/main/queue-worker-entity-index@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"queue-worker-priority-high":    "harbor.example/example-project/main/queue-worker-priority-high@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"queue-worker-priority-instant": "harbor.example/example-project/main/queue-worker-priority-instant@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"queue-worker-priority-low":     "harbor.example/example-project/main/queue-worker-priority-low@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+						"queue-worker-priority-medium":  "harbor.example/example-project/main/queue-worker-priority-medium@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
+					},
+				}, true),
+			templatePath: "testoutput",
+			want:         "internal/testdata/complex/service-templates/test-complex-persistent-names",
 		},
 		{
 			name:        "test16-nginx-php-resource-requests-from-env",

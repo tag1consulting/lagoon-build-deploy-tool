@@ -1,0 +1,91 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    lagoon.sh/branch: environment-name
+    lagoon.sh/version: v2.x.x
+  creationTimestamp: null
+  labels:
+    app.kubernetes.io/instance: myservice
+    app.kubernetes.io/managed-by: build-deploy-tool
+    app.kubernetes.io/name: basic-single
+    lagoon.sh/buildType: branch
+    lagoon.sh/environment: environment-name
+    lagoon.sh/environmentType: production
+    lagoon.sh/project: example-project
+    lagoon.sh/service: myservice
+    lagoon.sh/service-type: basic-single
+    lagoon.sh/template: basic-single-0.1.0
+  name: myservice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: myservice
+      app.kubernetes.io/name: basic-single
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        lagoon.sh/branch: environment-name
+        lagoon.sh/configMapSha: 32bf1359ac92178c8909f0ef938257b477708aa0d78a5a15ad7c2d7919adf273
+        lagoon.sh/version: v2.x.x
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/instance: myservice
+        app.kubernetes.io/managed-by: build-deploy-tool
+        app.kubernetes.io/name: basic-single
+        lagoon.sh/buildType: branch
+        lagoon.sh/environment: environment-name
+        lagoon.sh/environmentType: production
+        lagoon.sh/project: example-project
+        lagoon.sh/service: myservice
+        lagoon.sh/service-type: basic-single
+        lagoon.sh/template: basic-single-0.1.0
+    spec:
+      containers:
+      - env:
+        - name: LAGOON_GIT_SHA
+          value: "0"
+        - name: CRONJOBS
+        - name: SERVICE_NAME
+          value: myservice
+        envFrom:
+        - configMapRef:
+            name: lagoon-env
+        image: harbor.example.com/example-project/environment-name/myservice@latest
+        imagePullPolicy: Always
+        livenessProbe:
+          initialDelaySeconds: 60
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 10
+        name: basic
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        readinessProbe:
+          initialDelaySeconds: 1
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 1
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+        securityContext: {}
+        volumeMounts:
+        - mountPath: ""
+          name: myservice
+      enableServiceLinks: false
+      imagePullSecrets:
+      - name: lagoon-internal-registry-secret
+      priorityClassName: lagoon-priority-production
+      volumes:
+      - name: myservice
+        persistentVolumeClaim:
+          claimName: myservice
+status: {}
