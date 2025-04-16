@@ -3,7 +3,9 @@
 A modified version of build-deploy-tool with some added functionality allowing lagoon docker-compose service labels to
 specify resource requirements of service.
 
-Branch `upstream` is to be kept up with upstream main. `tag1-main` is where modifications live.
+Branch `upstream` is to be kept up with upstream main. `tag1-main` is release branch for tested changes ready to go.
+Default branch `tag1-dev` may be unstable or broken.
+
 
 Image may be built and push to ghcr.io by pushing a tag. We should version our tags off of the current upstream version changes are based on.
 Currently this is `core-v2.21.0` upstream, so should do something like: `v2.21.0-tag1-0.1` (keep our versioning after `v2.21.0-tag1-` prefix).
@@ -35,6 +37,8 @@ php:
 ### Deploying
 
 The deploy target (`lagoon list deploytargets`) has a buildimage override field that may be used.
+See available image tags here: https://github.com/tag1consulting/lagoon-build-deploy-tool/pkgs/container/build-deploy-image
+
 ```bash
 lagoon update deploytargets --id <id> --build-image 'ghcr.io/tag1consulting/build-deploy-image:v2.21.0-tag1-0.1'
 ```
