@@ -7,11 +7,13 @@ toolchain go1.23.3
 require (
 	dario.cat/mergo v1.0.1
 	github.com/PaesslerAG/gval v1.2.4
+	github.com/alessio/shellescape v1.4.1
 	github.com/amazeeio/dbaas-operator v0.3.0
 	github.com/andreyvit/diff v0.0.0-20170406064948-c7f18ee00883
 	github.com/compose-spec/compose-go v1.2.7
 	github.com/cxmcc/unixsums v0.0.0-20131125091133-89564297d82f
 	github.com/distribution/reference v0.6.0
+	github.com/docker/cli v27.5.1+incompatible
 	github.com/drone/envsubst v1.0.3
 	github.com/google/go-cmp v0.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.7
@@ -31,6 +33,7 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/distribution/v3 v3.0.0-20210316161203-a01c71e2477e // indirect
+	github.com/docker/docker-credential-helpers v0.8.2 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.1 // indirect

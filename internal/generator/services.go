@@ -1,12 +1,15 @@
 package generator
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/alessio/shellescape"
 	composetypes "github.com/compose-spec/compose-go/types"
 	"github.com/uselagoon/build-deploy-tool/internal/helpers"
 	"github.com/uselagoon/build-deploy-tool/internal/lagoon"
@@ -478,7 +481,7 @@ func composeToServiceValues(
 			return nil, err
 		}
 		if !buildValues.CronjobsDisabled {
-			for _, cronjob := range buildValues.LagoonYAML.Environments[buildValues.Branch].Cronjobs {
+			for idx, cronjob := range buildValues.LagoonYAML.Environments[buildValues.Branch].Cronjobs {
 				// if this cronjob is meant for this service, add it
 				if cronjob.Service == composeService {
 					var err error
@@ -490,8 +493,31 @@ func composeToServiceValues(
 					if err != nil {
 						return nil, fmt.Errorf("unable to convert crontab for cronjob %s: %v", cronjob.Name, err)
 					}
+					// handle setting the cronjob timeout here
+					// can't be greater than 24hrs and must match go time duration https://pkg.go.dev/time#ParseDuration
+					if cronjob.Timeout != "" {
+						cronjobTimeout, err := time.ParseDuration(cronjob.Timeout)
+						if err != nil {
+							return nil, fmt.Errorf("unable to convert timeout for cronjob %s: %v", cronjob.Name, err)
+						}
+						// max cronjob timeout is 24 hours
+						if cronjobTimeout > time.Duration(24*time.Hour) {
+							return nil, fmt.Errorf("timeout for cronjob %s cannot be longer than 24 hours", cronjob.Name)
+						}
+					} else {
+						// default cronjob timeout is 4h
+						cronjob.Timeout = "4h"
+					}
 					// if the cronjob is inpod, or the cronjob has an inpod flag override
 					if inpod || (cronjob.InPod != nil && *cronjob.InPod) {
+						cmd := cronjob.Command
+						// Lagoon enforces that only a single instance of a cronjob can run at any one time.
+						// https://man7.org/linux/man-pages/man1/flock.1.html
+						// https://www.gnu.org/savannah-checkouts/gnu/bash/manual/bash.html#Shell-Parameter-Expansion
+						sha := sha256.New()
+						sha.Write([]byte(fmt.Sprintf("%d %s", idx, cmd)))
+						cmdSha := sha.Sum(nil)
+						cronjob.Command = fmt.Sprintf("flock -n /tmp/cron.lock.%x -c %s", cmdSha, shellescape.Quote(cmd))
 						inpodcronjobs = append(inpodcronjobs, cronjob)
 					} else {
 						// make the cronjob name kubernetes compliant
