@@ -182,6 +182,10 @@ func GenerateDeploymentTemplate(
 				}
 			}
 
+			if len(*serviceValues.Tolerations) > 0 {
+				deployment.Spec.Template.Spec.Tolerations = *serviceValues.Tolerations
+			}
+
 			for key, value := range additionalLabels {
 				deployment.ObjectMeta.Labels[key] = value
 			}

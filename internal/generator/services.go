@@ -14,6 +14,8 @@ import (
 	"github.com/uselagoon/build-deploy-tool/internal/helpers"
 	"github.com/uselagoon/build-deploy-tool/internal/lagoon"
 	"github.com/uselagoon/build-deploy-tool/internal/servicetypes"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // this is a map that maps old service types to their new service types
@@ -593,6 +595,17 @@ func composeToServiceValues(
 			return nil, err
 		}
 
+		toleration := corev1.Toleration{}
+
+		if tolerationValue := lagoon.CheckDockerComposeLagoonLabel(composeServiceValues.Labels, "lagoon.toleration"); tolerationValue != "" {
+			toleration = corev1.Toleration{
+				Key:      tolerationValue,
+				Operator: "Exists",
+			}
+		}
+
+		tolerations := []corev1.Toleration{toleration}
+
 		// create the service values
 		cService := &ServiceValues{
 			Name:                                   composeService,
@@ -618,6 +631,7 @@ func composeToServiceValues(
 			BackupsEnabled:                         backupsEnabled,
 			AdditionalVolumes:                      serviceVolumes,
 			Resources:                              resources,
+			Tolerations:                            &tolerations,
 		}
 
 		// work out the images here and the associated dockerfile and contexts
