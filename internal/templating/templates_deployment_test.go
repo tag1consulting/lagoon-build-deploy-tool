@@ -1091,7 +1091,8 @@ func TestGenerateDeploymentTemplate(t *testing.T) {
 							Type:             "nginx-php",
 							DBaaSEnvironment: "production",
 							// Tolerate any node with a taint with key "gpu"
-							Tolerate: "gpu",
+							Tolerate:     "gpu",
+							NodeSelector: "hardware:gpu",
 						},
 						{
 							Name:             "php",

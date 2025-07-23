@@ -191,6 +191,18 @@ func GenerateDeploymentTemplate(
 				}
 			}
 
+			if serviceValues.NodeSelector != "" {
+				// get token in key:value form
+				tokens := strings.Split(serviceValues.NodeSelector, ":")
+				if len(tokens) == 2 {
+					key := tokens[0]
+					val := tokens[1]
+					deployment.Spec.Template.Spec.NodeSelector = map[string]string{
+						key: val,
+					}
+				}
+			}
+
 			for key, value := range additionalLabels {
 				deployment.ObjectMeta.Labels[key] = value
 			}

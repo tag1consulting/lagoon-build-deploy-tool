@@ -1424,7 +1424,7 @@ func Test_composeToServiceValues(t *testing.T) {
 			},
 		},
 		{
-			name: "test25 - service tolerations into ServiceValues",
+			name: "test25 - service tolerations and nodeselector into ServiceValues",
 			args: args{
 				buildValues: &BuildValues{
 					Namespace:            "example-project-main",
@@ -1443,9 +1443,10 @@ func Test_composeToServiceValues(t *testing.T) {
 				composeService: "nginx",
 				composeServiceValues: composetypes.ServiceConfig{
 					Labels: composetypes.Labels{
-						"lagoon.type":     "nginx",
-						"lagoon.name":     "nginx-php",
-						"lagoon.tolerate": "gpu",
+						"lagoon.type":         "nginx",
+						"lagoon.name":         "nginx-php",
+						"lagoon.tolerate":     "gpu",
+						"lagoon.nodeSelector": "hardware:gpu",
 					},
 					Build: &composetypes.BuildConfig{
 						Context:    ".",
@@ -1462,6 +1463,7 @@ func Test_composeToServiceValues(t *testing.T) {
 				InPodCronjobs:              []lagoon.Cronjob{},
 				NativeCronjobs:             []lagoon.Cronjob{},
 				Tolerate:                   "gpu",
+				NodeSelector:               "hardware:gpu",
 				ImageBuild: &ImageBuild{
 					TemporaryImage: "example-project-main-nginx",
 					Context:        ".",

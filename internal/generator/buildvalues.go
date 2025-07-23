@@ -198,6 +198,7 @@ type ServiceValues struct {
 	LinkedService                          *ServiceValues          `json:"linkedService"`
 	PodSecurityContext                     PodSecurityContext      `json:"podSecurityContext"`
 	AdditionalServicePorts                 []AdditionalServicePort `json:"additionalServicePorts,omitempty"`
+	NodeSelector                           string                  `json:"nodeSelector,omitempty"`
 	NodeSelectors                          *map[string]string      `json:"nodeSelectors"`
 	Tolerate                               string                  `json:"tolerate,omitempty"`
 	Tolerations                            *[]corev1.Toleration    `json:"tolerations"`
