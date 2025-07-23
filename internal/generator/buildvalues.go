@@ -199,6 +199,7 @@ type ServiceValues struct {
 	PodSecurityContext                     PodSecurityContext      `json:"podSecurityContext"`
 	AdditionalServicePorts                 []AdditionalServicePort `json:"additionalServicePorts,omitempty"`
 	NodeSelectors                          *map[string]string      `json:"nodeSelectors"`
+	Tolerate                               string                  `json:"tolerate,omitempty"`
 	Tolerations                            *[]corev1.Toleration    `json:"tolerations"`
 	Affinity                               *corev1.Affinity        `json:"affinity"`
 	CronjobNodeSelectors                   *map[string]string      `json:"cronjobNodeSelectors"`

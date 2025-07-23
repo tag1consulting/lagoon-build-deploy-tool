@@ -182,8 +182,13 @@ func GenerateDeploymentTemplate(
 				}
 			}
 
-			if len(*serviceValues.Tolerations) > 0 {
-				deployment.Spec.Template.Spec.Tolerations = *serviceValues.Tolerations
+			if serviceValues.Tolerate != "" {
+				deployment.Spec.Template.Spec.Tolerations = []corev1.Toleration{
+					{
+						Key:      serviceValues.Tolerate,
+						Operator: "Exists",
+					},
+				}
 			}
 
 			for key, value := range additionalLabels {
