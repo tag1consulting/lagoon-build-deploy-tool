@@ -1058,6 +1058,52 @@ func TestGenerateDeploymentTemplate(t *testing.T) {
 			},
 			want: "test-resources/deployment/result-nginx-php-resources-1.yaml",
 		},
+		{
+			name: "test21 - nginx-php ServiceValues toleration",
+			args: args{
+				buildValues: generator.BuildValues{
+					Project:         "example-project",
+					Environment:     "environment-name",
+					EnvironmentType: "production",
+					Namespace:       "myexample-project-environment-name",
+					BuildType:       "branch",
+					LagoonVersion:   "v2.x.x",
+					Kubernetes:      "generator.local",
+					Branch:          "environment-name",
+					FeatureFlags: map[string]bool{
+						"rootlessworkloads": true,
+					},
+					PodSecurityContext: generator.PodSecurityContext{
+						RunAsGroup: 0,
+						RunAsUser:  10000,
+						FsGroup:    10001,
+					},
+					GitSHA:       "0",
+					ConfigMapSha: "32bf1359ac92178c8909f0ef938257b477708aa0d78a5a15ad7c2d7919adf273",
+					ImageReferences: map[string]string{
+						"nginx": "harbor.example.com/example-project/environment-name/nginx@latest",
+						"php":   "harbor.example.com/example-project/environment-name/php@latest",
+					},
+					Services: []generator.ServiceValues{
+						{
+							Name:             "nginx",
+							OverrideName:     "nginx",
+							Type:             "nginx-php",
+							DBaaSEnvironment: "production",
+							// Tolerate any node with a taint with key "gpu"
+							Tolerate: "gpu",
+						},
+						{
+							Name:             "php",
+							OverrideName:     "nginx",
+							Type:             "nginx-php",
+							DBaaSEnvironment: "production",
+						},
+					},
+				},
+			},
+			want: "test-resources/deployment/result-nginx-php-toleration-1.yaml",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
