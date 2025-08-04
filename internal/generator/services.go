@@ -593,6 +593,9 @@ func composeToServiceValues(
 			return nil, err
 		}
 
+		tolerate := lagoon.CheckDockerComposeLagoonLabel(composeServiceValues.Labels, "lagoon.tolerate")
+		nodeSelector := lagoon.CheckDockerComposeLagoonLabel(composeServiceValues.Labels, "lagoon.nodeSelector")
+
 		// create the service values
 		cService := &ServiceValues{
 			Name:                                   composeService,
@@ -618,6 +621,8 @@ func composeToServiceValues(
 			BackupsEnabled:                         backupsEnabled,
 			AdditionalVolumes:                      serviceVolumes,
 			Resources:                              resources,
+			Tolerate:                               tolerate,
+			NodeSelector:                           nodeSelector,
 		}
 
 		// work out the images here and the associated dockerfile and contexts
