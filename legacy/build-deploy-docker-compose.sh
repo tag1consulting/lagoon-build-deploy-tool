@@ -120,6 +120,27 @@ function buildEnvVarCheck() {
   echo "$2"
 }
 
+# Checks for a internal_system scoped env var from Lagoon API. All env vars
+# are consolidated into the environment, project env-vars are only checked for
+# backwards compatibility.
+function internalSystemEnvVarCheck() {
+  # check for argument
+  [ "$1" ] || return
+
+  local flagVar
+
+  flagVar="$1"
+  # check Lagoon environment variables
+  flagValue=$(jq -r '.[] | select(.scope == "internal_system") | select(.name == "'"$flagVar"'") | .value' <<< "$LAGOON_ENVIRONMENT_VARIABLES")
+  [ "$flagValue" ] && echo "$flagValue" && return
+  # check Lagoon project variables
+  flagValue=$(jq -r '.[] | select(.scope == "internal_system") | select(.name == "'"$flagVar"'") | .value' <<< "$LAGOON_PROJECT_VARIABLES")
+  [ "$flagValue" ] && echo "$flagValue" && return
+
+  echo "$2"
+}
+
+
 # Checks for a internal_container_registry scoped env var. These are set in
 # lagoon-remote.
 function internalContainerRegistryCheck() {
@@ -141,7 +162,7 @@ function internalContainerRegistryCheck() {
 
 SCC_CHECK=$(kubectl -n ${NAMESPACE} get pod ${LAGOON_BUILD_NAME} -o json | jq -r '.metadata.annotations."openshift.io/scc" // false')
 
-# begin build step will echo the step start delimeter and then patch kubernetes resource with the value
+# begin build step will echo the step start delimiter and then patch kubernetes resource with the value
 function beginBuildStep() {
   [ "$1" ] || return #Buildstep start
   [ "$2" ] || return #buildstep
@@ -150,14 +171,24 @@ function beginBuildStep() {
 
   # patch the buildpod with the buildstep
   if [ "${SCC_CHECK}" == false ]; then
+    # refresh the token as required
+    if [[ -f "/var/run/secrets/kubernetes.io/serviceaccount/token" ]]; then
+      DEPLOYER_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    else
+      if [[ -f "/var/run/secrets/lagoon/deployer/token" ]]; then
+        DEPLOYER_TOKEN=$(cat /var/run/secrets/lagoon/deployer/token)
+      fi
+    fi
+    kubectl config set-credentials lagoon/kubernetes.default.svc --token="${DEPLOYER_TOKEN}" &> /dev/null
+    # try patch, ignore errors
     kubectl patch -n ${NAMESPACE} pod ${LAGOON_BUILD_NAME} \
-      -p "{\"metadata\":{\"labels\":{\"lagoon.sh/buildStep\":\"${2}\",\"build.lagoon.sh/images-complete\":\"${IMAGE_BUILD_PUSH_COMPLETE}\"}}}" &> /dev/null
+      -p "{\"metadata\":{\"labels\":{\"lagoon.sh/buildStep\":\"${2}\",\"build.lagoon.sh/images-complete\":\"${IMAGE_BUILD_PUSH_COMPLETE}\"}}}" &> /dev/null || true
     # tiny sleep to allow patch to complete before logs roll again
     sleep 0.5s
   fi
 }
 
-# finalize build step will echo the end delimeter only
+# finalize build step will echo the end delimiter only
 function finalizeBuildStep() {
   [ "$1" ] || return #total start time
   [ "$2" ] || return #step start time
@@ -204,6 +235,8 @@ function cleanupCertificates() {
     kubectl -n ${NAMESPACE} delete certificates.cert-manager.io ${TLS_SECRET} &> /dev/null || true
   done
 }
+
+touch /tmp/warnings
 
 ##############################################
 ### PREPARATION
@@ -252,11 +285,12 @@ if [ ! -z "$(featureFlag IMAGECACHE_REGISTRY)" ]; then
   [[ $last_char != "/" ]] && IMAGECACHE_REGISTRY="$IMAGECACHE_REGISTRY/"; :
 fi
 
-set +e
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "initialSetup" "Initial Environment Setup" "false"
+build-deploy-tool run hooks --hook-name "Pre .lagoon.yml Validation" --hook-directory "pre-lagoon-yaml-validation"
 previousStepEnd=${currentStepEnd}
 
+set +e
 # Validate `lagoon.yml` first to try detect any errors here first
 beginBuildStep ".lagoon.yml Validation" "lagoonYmlValidation"
 ##############################################
@@ -314,6 +348,9 @@ fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "lagoonYmlValidation" ".lagoon.yml Validation" "false"
+set -e
+build-deploy-tool run hooks --hook-name "Pre Docker Compose Validation" --hook-directory "pre-docker-compose-validation"
+set +e
 previousStepEnd=${currentStepEnd}
 
 # The attempt to valid the `docker-compose.yaml` file
@@ -442,11 +479,9 @@ if [[ "$DOCKER_COMPOSE_WARNING_COUNT" -gt 0 ]]; then
   echo "##############################################"
   currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
   finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "dockerComposeValidationWarning" "Docker Compose Validation" "true"
-  previousStepEnd=${currentStepEnd}
 else
   currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
   finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "dockerComposeValidation" "Docker Compose Validation" "false"
-  previousStepEnd=${currentStepEnd}
 fi
 set -e
 
@@ -470,6 +505,8 @@ else
 fi
 ##################
 
+build-deploy-tool run hooks --hook-name "Pre Configure Variables" --hook-directory "pre-configure-variables"
+previousStepEnd=${currentStepEnd}
 beginBuildStep "Configure Variables" "configuringVariables"
 
 ##############################################
@@ -532,7 +569,7 @@ do
   # Load the servicetype. If it's "none" we will not care about this service at all
   SERVICE_TYPE=$(echo "$SERVICE_JSON" | jq -r '.labels."lagoon.type" // "custom"')
 
-  # Allow the servicetype to be overriden by environment in .lagoon.yml
+  # Allow the servicetype to be overridden by environment in .lagoon.yml
   ENVIRONMENT_SERVICE_TYPE_OVERRIDE=$(cat .lagoon.yml | yq -o json | jq -r '.environments.'\"${BRANCH}\"'.types.'\"$SERVICE_NAME\"' // false')
   if [ ! $ENVIRONMENT_SERVICE_TYPE_OVERRIDE == "false" ]; then
     SERVICE_TYPE=$ENVIRONMENT_SERVICE_TYPE_OVERRIDE
@@ -631,6 +668,7 @@ LAGOON_POSTROLLOUT_DISABLED=$(apiEnvVarCheck LAGOON_POSTROLLOUT_DISABLED "false"
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${buildStartTime}" "${currentStepEnd}" "${NAMESPACE}" "configureVars" "Configure Variables" "false"
+build-deploy-tool run hooks --hook-name "Pre Container Registry Login" --hook-directory "pre-registry-login"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Container Registry Login" "registryLogin"
 
@@ -996,6 +1034,7 @@ fi
 # set that the image build and push phase has ended
 IMAGE_BUILD_PUSH_COMPLETE="true"
 
+build-deploy-tool run hooks --hook-name "Pre Service Configuration Phase" --hook-directory "pre-service-configuration-phase"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Service Configuration Phase" "serviceConfigurationPhase"
 
@@ -1009,7 +1048,7 @@ mkdir -p $YAML_FOLDER
 # BC for routes.insecure, which is now called routes.autogenerate.insecure
 BC_ROUTES_AUTOGENERATE_INSECURE=$(cat .lagoon.yml | yq -o json | jq -r '.routes.insecure // false')
 if [ ! $BC_ROUTES_AUTOGENERATE_INSECURE == "false" ]; then
-  echo "=== routes.insecure is now defined in routes.autogenerate.insecure, pleae update your .lagoon.yml file"
+  echo "=== routes.insecure is now defined in routes.autogenerate.insecure, please update your .lagoon.yml file"
   # update the .lagoon.yml with the new location for build-deploy-tool to read
   yq -i '.routes.autogenerate.insecure = "'${BC_ROUTES_AUTOGENERATE_INSECURE}'"' .lagoon.yml
 fi
@@ -1087,6 +1126,7 @@ fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "serviceConfigurationComplete" "Service Configuration Phase" "false"
+build-deploy-tool run hooks --hook-name "Pre Route Configuration" --hook-directory "pre-route-configuration"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Route/Ingress Configuration" "configuringRoutes"
 
@@ -1114,6 +1154,7 @@ fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "configuringRoutesComplete" "Route/Ingress Configuration" "false"
+build-deploy-tool run hooks --hook-name "Pre Route Cleanup" --hook-directory "pre-route-cleanup"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Route/Ingress Cleanup" "cleanupRoutes"
 
@@ -1122,7 +1163,7 @@ beginBuildStep "Route/Ingress Cleanup" "cleanupRoutes"
 ##############################################s
 
 # collect the current routes excluding any certmanager requests.
-# its also possible to exclude ingress by adding a label 'route.lagoon.sh/remove=false', this is then used to skip this from the removal checks
+# its also possible to exclude ingress by adding a label 'lagoon.sh/remove=false', this is then used to skip this from the removal checks
 CURRENT_ROUTES=$(kubectl -n ${NAMESPACE} get ingress  -l "lagoon.sh/autogenerated!=true"  --no-headers  2> /dev/null | cut -d " " -f 1 | xargs)
 # since label selectors can't be combined properly, this is done so that the build can get all the routes
 # and then remove any that match our conditions to be ignored by the removal checker
@@ -1162,29 +1203,49 @@ CLEANUP_WARNINGS="false"
 if [ ${#DELETE_INGRESS[@]} -ne 0 ]; then
   CLEANUP_WARNINGS="true"
   ((++BUILD_WARNING_COUNT))
-  echo ">> Lagoon detected routes that have been removed from the .lagoon.yml or Lagoon API"
-  echo "> If you need these routes, you should update your .lagoon.yml file and make sure the routes exist."
-  if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" != enabled ]; then
-    echo "> If you no longer need these routes, you can instruct Lagoon to remove it from the environment by setting the following variable"
-    echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' as a GLOBAL scoped variable to this environment or project"
-    echo "> You should remove this variable after the deployment has been completed, otherwise future route removals will happen automatically"
-  else
-    echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' is configured and the following routes will be removed."
-    echo "> You should remove this variable if you don't want routes to be removed automatically"
-  fi
-  echo "> Future releases of Lagoon may remove routes automatically, you should ensure that your routes are up always up to date if you see this warning"
-  for DI in ${DELETE_INGRESS[@]}
-  do
-    if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" = enabled ]; then
+  API_ROUTES_CLEANUP=$(internalSystemEnvVarCheck LAGOON_API_ROUTES_CLEANUP false)
+  if [ "$API_ROUTES_CLEANUP" == true ]; then
+    # to ensure consistency with the api, enforce route cleanup
+    # if it isn't in the api, and isn't in the .lagoon.yml file, then it shouldn't exist.
+    echo ">> Lagoon detected routes that have been removed from the .lagoon.yml or Lagoon API"
+    echo "> As this project has routes managed in the API, these routes have been cleaned up."
+    echo "> If you need these routes, you should add them to the API."
+    for DI in ${DELETE_INGRESS[@]}
+    do
       if kubectl -n ${NAMESPACE} get ingress ${DI} &> /dev/null; then
         echo ">> Removing ingress ${DI}"
         cleanupCertificates "${DI}" "false"
         kubectl -n ${NAMESPACE} delete ingress ${DI}
       fi
+    done
+  else
+    # no routes in the api we will just continue to warn
+    # since users may not have realised they removed a route from the .lagoon.yml
+    # usually this is because of a bad merge or something, and people generally aren't reading warnings anyway
+    echo ">> Lagoon detected routes that have been removed from the .lagoon.yml or Lagoon API"
+    echo "> If you need these routes, you should update your .lagoon.yml file and make sure the routes exist."
+    if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" != enabled ]; then
+      echo "> If you no longer need these routes, you can instruct Lagoon to remove it from the environment by setting the following variable"
+      echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' as a GLOBAL scoped variable to this environment or project"
+      echo "> You should remove this variable after the deployment has been completed, otherwise future route removals will happen automatically"
     else
-      echo "> The route '${DI}' would be removed"
+      echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' is configured and the following routes will be removed."
+      echo "> You should remove this variable if you don't want routes to be removed automatically"
     fi
-  done
+    echo "> Future releases of Lagoon may remove routes automatically, you should ensure that your routes are up always up to date if you see this warning"
+    for DI in ${DELETE_INGRESS[@]}
+    do
+      if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" = enabled ]; then
+        if kubectl -n ${NAMESPACE} get ingress ${DI} &> /dev/null; then
+          echo ">> Removing ingress ${DI}"
+          cleanupCertificates "${DI}" "false"
+          kubectl -n ${NAMESPACE} delete ingress ${DI}
+        fi
+      else
+        echo "> The route '${DI}' would be removed"
+      fi
+    done
+  fi
 else
   echo "No route cleanup required"
 fi
@@ -1221,6 +1282,7 @@ if [ "${CURRENT_CHALLENGE_ROUTES[@]}" != "" ]; then
   currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
   finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "staleChallengesComplete" "Route/Ingress Certificate Challenges" "true"
 fi
+build-deploy-tool run hooks --hook-name "Pre Update Secrets" --hook-directory "pre-update-secrets"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Update Environment Secrets" "updateEnvSecrets"
 
@@ -1498,6 +1560,7 @@ LAGOONPLATFORMENV_SHA=$(kubectl --insecure-skip-tls-verify -n ${NAMESPACE} get s
 CONFIG_MAP_SHA=$(echo $LAGOONENV_SHA$LAGOONPLATFORMENV_SHA | sha256sum | awk '{print $1}')
 export CONFIG_MAP_SHA
 
+build-deploy-tool run hooks --hook-name "Pre Backup Configuration" --hook-directory "pre-backup-configuration"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Backup Configuration" "configuringBackups"
 
@@ -1552,6 +1615,7 @@ fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "backupConfigurationComplete" "Backup Configuration" "false"
+build-deploy-tool run hooks --hook-name "Pre Pre-Rollout Tasks" --hook-directory "pre-pre-rollout"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Pre-Rollout Tasks" "runningPreRolloutTasks"
 
@@ -1568,6 +1632,7 @@ else
 fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
+build-deploy-tool run hooks --hook-name "Pre Deployment Templating" --hook-directory "pre-deployment-templating"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Deployment Templating" "templatingDeployments"
 
@@ -1607,6 +1672,7 @@ build-deploy-tool template lagoon-services --saved-templates-path ${LAGOON_SERVI
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "deploymentTemplatingComplete" "Deployment Templating" "false"
+build-deploy-tool run hooks --hook-name "Pre Applying Deployments" --hook-directory "pre-applying-deployments"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Applying Deployments" "applyingDeployments"
 
@@ -1673,6 +1739,7 @@ fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "deploymentApplyComplete" "Applying Deployments" "false"
+build-deploy-tool run hooks --hook-name "Pre Cronjob Cleanup" --hook-directory "pre-cronjob-cleanup"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Cronjob Cleanup" "cleaningUpCronjobs"
 
@@ -1706,6 +1773,7 @@ done
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
 finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "cronjobCleanupComplete" "Cronjob Cleanup" "false"
+build-deploy-tool run hooks --hook-name "Pre Post-Rollout Tasks" --hook-directory "pre-post-rollout"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Post-Rollout Tasks" "runningPostRolloutTasks"
 
@@ -1723,6 +1791,7 @@ else
 fi
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
+build-deploy-tool run hooks --hook-name "Pre Finalizing Build" --hook-directory "pre-finalizing-build"
 previousStepEnd=${currentStepEnd}
 beginBuildStep "Build and Deploy" "finalizingBuild"
 
@@ -1793,9 +1862,11 @@ if [ "$(featureFlag INSIGHTS)" = enabled ]; then
 
 fi
 
+EXTRA_WARNINGS=$(cat /tmp/warnings | wc -l)
+BUILD_WARNING_COUNT=$((BUILD_WARNING_COUNT + EXTRA_WARNINGS))
 if [[ "$BUILD_WARNING_COUNT" -gt 0 ]]; then
   beginBuildStep "Completed With Warnings" "deployCompletedWithWarnings"
-  echo "This build completed with ${BUILD_WARNING_COUNT} warnings, you should scan the build for warnings and correct them as neccessary"
+  echo "This build completed with ${BUILD_WARNING_COUNT} warnings, you should scan the build for warnings and correct them as necessary"
   finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "deployCompletedWithWarnings" "Completed With Warnings" "true"
   previousStepEnd=${currentStepEnd}
   # patch the buildpod with the buildstep
