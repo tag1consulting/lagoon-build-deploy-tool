@@ -89,7 +89,8 @@ type BuildValues struct {
 	ConfigSSHHost                 string                       `json:"configSSHHost"`
 	ConfigSSHPort                 string                       `json:"configSSHPort"`
 	LagoonEnvVariables            map[string]string            `json:"lagoonEnvVariables" description:"map of variables that will be saved into the lagoon-env secret"`
-	LagoonPlatformEnvVariables    map[string]string            `json:"agoonPlatformEnvVariables" description:"map of variables that will be saved into the lagoon-platform-env secret"`
+	LagoonPlatformEnvVariables    map[string]string            `json:"lagoonPlatformEnvVariables" description:"map of variables that will be saved into the lagoon-platform-env secret"`
+	AutoMountServiceAccountToken  bool                         `json:"autoMountServiceAccountToken" description:"flag to enable automounting the service account token"`
 }
 
 type Resources struct {
@@ -214,6 +215,14 @@ type ServiceValues struct {
 	AdditionalVolumes                      []ServiceVolume         `json:"additonalVolumes,omitempty"`
 	CreateDefaultVolume                    bool                    `json:"createDefaultVolume"`
 	Resources                              Resources               `json:"resources,omitempty"`
+	ExternalServiceName                    string                  `json:"externalServiceName,omitempty"`
+}
+
+type ExternalService struct {
+	Name        string `json:"name,omitempty"`
+	Project     string `json:"project,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	Domain      string `json:"domain,omitempty"`
 }
 
 type ImageBuild struct {
