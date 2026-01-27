@@ -185,6 +185,26 @@ function finalizeBuildStep() {
   echo -e "##############################################\nSTEP ${6}: Completed at ${3} (${timeZone}) Duration ${diffTime} Elapsed ${diffTotalTime}${hasWarnings}\n##############################################"
 }
 
+function cleanupCertificates() {
+  [ "$1" ] || return #ingress
+  TLS_SECRETS=$(kubectl -n ${NAMESPACE} get ingress ${1} -o json | jq -r '.spec.tls[]?.secretName')
+  for TLS_SECRET in $TLS_SECRETS; do
+    echo ">> Cleaning up certificate for ${TLS_SECRET}"
+    # if cleanup secret certs is true, then clean up the secrets
+    if [ "$2" == "true" ]; then
+      if kubectl -n ${NAMESPACE} get secret ${TLS_SECRET} &> /dev/null; then
+        # check if it is a lets encrypt certificate
+        if openssl x509 -in <(kubectl -n ${NAMESPACE} get secret ${TLS_SECRET} -o json | jq -r '.data."tls.crt" | @base64d') -text -noout | grep -o -q "Let's Encrypt" &> /dev/null; then
+          # don't block execution
+          kubectl -n ${NAMESPACE} delete secret ${TLS_SECRET} &> /dev/null || true
+        fi
+      fi
+    fi
+    # delete the certmanager certificate to prevent renewals
+    kubectl -n ${NAMESPACE} delete certificates.cert-manager.io ${TLS_SECRET} &> /dev/null || true
+  done
+}
+
 ##############################################
 ### PREPARATION
 ##############################################
@@ -243,7 +263,7 @@ beginBuildStep ".lagoon.yml Validation" "lagoonYmlValidation"
 ### RUN lagoon-yml validation against the final data which may have overrides
 ### from .lagoon.override.yml file or LAGOON_YAML_OVERRIDE environment variable
 ##############################################
-lyvOutput=$(bash -c 'build-deploy-tool validate lagoon-yml; exit $?' 2>&1)
+lyvOutput=$(build-deploy-tool validate lagoon-yml; exit $? 2>&1)
 lyvExit=$?
 
 echo "Updating lagoon-yaml configmap with a pre-deploy version of the .lagoon.yml file"
@@ -282,18 +302,36 @@ https://docs.lagoon.sh/using-lagoon-the-basics/lagoon-yml/
   exit 1
 fi
 
+# Validate .lagoon.yml only, no overrides. lagoon-linter still has checks that
+# aren't in build-deploy-tool.
+if ! lagoon-linter; then
+	echo "${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/lagoon/using-lagoon-the-basics/lagoon-yml#restrictions describes some possible reasons for this build failure."
+	echo "If you require assistance to fix this error, please contact support."
+	exit 1
+else
+	echo "lagoon-linter found no issues with the .lagoon.yml file"
+fi
+
+currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
+finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "lagoonYmlValidation" ".lagoon.yml Validation" "false"
+previousStepEnd=${currentStepEnd}
+
 # The attempt to valid the `docker-compose.yaml` file
 beginBuildStep "Docker Compose Validation" "dockerComposeValidation"
 
 # Load path of docker-compose that should be used
-DOCKER_COMPOSE_YAML=($(cat .lagoon.yml | yq -o json | jq -r '."docker-compose-yaml"'))
+DOCKER_COMPOSE_YAML=($(build-deploy-tool validate lagoon-yml --print-resulting-lagoonyml --json | jq -r '."docker-compose-yaml"'))
+if [ ! -f "${DOCKER_COMPOSE_YAML}" ]; then
+  # this check also happens in the build-deploy-tool, this is a secondary check
+  echo "docker-compose file referenced in .lagoon.yml not found"
+fi
 
 DOCKER_COMPOSE_WARNING_COUNT=0
 ##############################################
 ### RUN docker compose config check against the provided docker-compose file
 ### use the `build-validate` built in validater to run over the provided docker-compose file
 ##############################################
-dccOutput=$(bash -c 'build-deploy-tool validate docker-compose --docker-compose '${DOCKER_COMPOSE_YAML}'; exit $?' 2>&1)
+dccOutput=$(build-deploy-tool validate docker-compose --lagoon-yml .lagoon.yml; exit $? 2>&1)
 dccExit=$?
 
 echo "Updating docker-compose-yaml configmap with a pre-deploy version of the docker-compose.yml file"
@@ -307,11 +345,11 @@ if kubectl -n ${NAMESPACE} get configmap docker-compose-yaml &> /dev/null; then
     kubectl -n ${NAMESPACE} get configmap docker-compose-yaml -o json | jq --arg add "`cat ${DOCKER_COMPOSE_YAML}`" '.data."pre-deploy" = $add' | kubectl apply -f -
   else
     # if the key does exist, then nuke it and put the new key
-    kubectl -n ${NAMESPACE} create configmap docker-compose-yaml --from-file=pre-deploy=${DOCKER_COMPOSE_YAML} -o yaml --dry-run=client | kubectl replace -f -
+    kubectl -n ${NAMESPACE} create configmap docker-compose-yaml --from-file=pre-deploy="${DOCKER_COMPOSE_YAML}" -o yaml --dry-run=client | kubectl replace -f -
   fi
  else
   # create it
-  kubectl -n ${NAMESPACE} create configmap docker-compose-yaml --from-file=pre-deploy=${DOCKER_COMPOSE_YAML}
+  kubectl -n ${NAMESPACE} create configmap docker-compose-yaml --from-file=pre-deploy="${DOCKER_COMPOSE_YAML}"
 fi
 
 if [ "${dccExit}" != "0" ]; then
@@ -332,7 +370,7 @@ You can run docker compose config locally to check that your docker-compose file
 fi
 
 ## validate the docker-compose in a way to eventually phase out forked library by displaying warnings
-dccOutput=$(bash -c 'build-deploy-tool validate docker-compose --ignore-non-string-key-errors=false --ignore-missing-env-files=false --docker-compose '${DOCKER_COMPOSE_YAML}'; exit $?' 2>&1)
+dccOutput=$(build-deploy-tool validate docker-compose --ignore-non-string-key-errors=false --ignore-missing-env-files=false --lagoon-yml .lagoon.yml; exit $? 2>&1)
 dccExit=$?
 if [ "${dccExit}" != "0" ]; then
   ((++BUILD_WARNING_COUNT))
@@ -353,7 +391,7 @@ You can run docker compose config locally to check that your docker-compose file
   echo ""
 fi
 
-dccOutput=$(bash -c 'build-deploy-tool validate docker-compose-with-errors --docker-compose '${DOCKER_COMPOSE_YAML}'; exit $?' 2>&1)
+dccOutput=$(build-deploy-tool validate docker-compose-with-errors --lagoon-yml .lagoon.yml; exit $? 2>&1)
 dccExit2=$?
 if [ "${dccExit2}" != "0" ]; then
   ((++DOCKER_COMPOSE_WARNING_COUNT))
@@ -412,16 +450,6 @@ else
 fi
 set -e
 
-# Validate .lagoon.yml only, no overrides. lagoon-linter still has checks that
-# aren't in build-deploy-tool.
-if ! lagoon-linter; then
-	echo "${LAGOON_FEATURE_FLAG_DEFAULT_DOCUMENTATION_URL}/lagoon/using-lagoon-the-basics/lagoon-yml#restrictions describes some possible reasons for this build failure."
-	echo "If you require assistance to fix this error, please contact support."
-	exit 1
-else
-	echo "lagoon-linter found no issues with the .lagoon.yml file"
-fi
-
 ##################
 # build deploy-tool can collect this value now from the lagoon.yml file
 # this means further use of `LAGOON_GIT_SHA` can eventually be
@@ -442,13 +470,7 @@ else
 fi
 ##################
 
-currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
-finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "lagoonYmlValidation" ".lagoon.yml Validation" "false"
-previousStepEnd=${currentStepEnd}
 beginBuildStep "Configure Variables" "configuringVariables"
-
-# Load all Services that are defined
-COMPOSE_SERVICES=($(cat $DOCKER_COMPOSE_YAML | yq -o json | jq -r '.services | keys_unsorted | .[]'))
 
 ##############################################
 ### CACHE IMAGE LIST GENERATION
@@ -496,16 +518,19 @@ fi
 
 # loop through created DBAAS templates
 DBAAS=($(build-deploy-tool identify dbaas))
-for COMPOSE_SERVICE in "${COMPOSE_SERVICES[@]}"
+# Load all Services that are defined
+COMPOSE_SERVICES=$(build-deploy-tool validate docker-compose --lagoon-yml .lagoon.yml --json)
+for COMPOSE_SERVICE in $(echo "$COMPOSE_SERVICES" | jq -rc '.order[]?.Name')
 do
+  SERVICE_JSON=$(echo "$COMPOSE_SERVICES" | jq --arg COMPOSE_SERVICE "$COMPOSE_SERVICE" -c '.spec.services[$COMPOSE_SERVICE]')
   # The name of the service can be overridden, if not we use the actual servicename
-  SERVICE_NAME=$(cat $DOCKER_COMPOSE_YAML | yq -o json | jq -r '.services.'\"$COMPOSE_SERVICE\"'.labels."lagoon.name" // "default"')
+  SERVICE_NAME=$(echo "$SERVICE_JSON" | jq -r '.labels."lagoon.name" // "default"')
   if [ "$SERVICE_NAME" == "default" ]; then
     SERVICE_NAME=$COMPOSE_SERVICE
   fi
 
   # Load the servicetype. If it's "none" we will not care about this service at all
-  SERVICE_TYPE=$(cat $DOCKER_COMPOSE_YAML | yq -o json | jq -r '.services.'\"$COMPOSE_SERVICE\"'.labels."lagoon.type" // "custom"')
+  SERVICE_TYPE=$(echo "$SERVICE_JSON" | jq -r '.labels."lagoon.type" // "custom"')
 
   # Allow the servicetype to be overriden by environment in .lagoon.yml
   ENVIRONMENT_SERVICE_TYPE_OVERRIDE=$(cat .lagoon.yml | yq -o json | jq -r '.environments.'\"${BRANCH}\"'.types.'\"$SERVICE_NAME\"' // false')
@@ -541,7 +566,7 @@ do
 
   # For DeploymentConfigs with multiple Services inside (like nginx-php), we allow to define the service type of within the
   # deploymentconfig via lagoon.deployment.servicetype. If this is not set we use the Compose Service Name
-  DEPLOYMENT_SERVICETYPE=$(cat $DOCKER_COMPOSE_YAML | yq -o json | jq -r '.services.'\"$COMPOSE_SERVICE\"'.labels."lagoon.deployment.servicetype" // "default"')
+  DEPLOYMENT_SERVICETYPE=$(echo "$SERVICE_JSON" | jq -r '.labels."lagoon.deployment.servicetype" // "default"')
   if [ "$DEPLOYMENT_SERVICETYPE" == "default" ]; then
     DEPLOYMENT_SERVICETYPE=$COMPOSE_SERVICE
   fi
@@ -1153,8 +1178,8 @@ if [ ${#DELETE_INGRESS[@]} -ne 0 ]; then
     if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" = enabled ]; then
       if kubectl -n ${NAMESPACE} get ingress ${DI} &> /dev/null; then
         echo ">> Removing ingress ${DI}"
+        cleanupCertificates "${DI}" "false"
         kubectl -n ${NAMESPACE} delete ingress ${DI}
-        #delete anything else?
       fi
     else
       echo "> The route '${DI}' would be removed"
@@ -1553,7 +1578,7 @@ beginBuildStep "Deployment Templating" "templatingDeployments"
 # generate a map of servicename>imagename+hash json for the build-deploy-tool to use when templating
 # this reduces the need for the crazy logic with how services are currently mapped together in the case of nginx-php type deploymentss
 touch /kubectl-build-deploy/images.yaml
-for COMPOSE_SERVICE in "${COMPOSE_SERVICES[@]}"
+for COMPOSE_SERVICE in $(echo "$COMPOSE_SERVICES" | jq -rc '.order[]?.Name')
 do
   SERVICE_NAME_IMAGE_HASH="${IMAGE_HASHES[${COMPOSE_SERVICE}]}"
   yq -i '.images.'$COMPOSE_SERVICE' = "'${SERVICE_NAME_IMAGE_HASH}'"' /kubectl-build-deploy/images.yaml
@@ -1719,25 +1744,13 @@ if kubectl -n ${NAMESPACE} get configmap docker-compose-yaml &> /dev/null; then
   kubectl -n ${NAMESPACE} get configmap docker-compose-yaml -o json | jq --arg add "`cat ${DOCKER_COMPOSE_YAML}`" '.data."post-deploy" = $add' | kubectl apply -f -
  else
   # create it
-  kubectl -n ${NAMESPACE} create configmap docker-compose-yaml --from-file=post-deploy=${DOCKER_COMPOSE_YAML}
+  kubectl -n ${NAMESPACE} create configmap docker-compose-yaml --from-file=post-deploy="${DOCKER_COMPOSE_YAML}"
 fi
 
 # remove any certificates for tls-acme false ingress to prevent reissuing attempts
 TLS_FALSE_INGRESSES=$(kubectl -n ${NAMESPACE} get ingress -o json | jq -r '.items[] | select(.metadata.annotations["kubernetes.io/tls-acme"] == "false") | .metadata.name')
 for TLS_FALSE_INGRESS in $TLS_FALSE_INGRESSES; do
-  TLS_SECRETS=$(kubectl -n ${NAMESPACE} get ingress ${TLS_FALSE_INGRESS} -o json | jq -r '.spec.tls[]?.secretName')
-  for TLS_SECRET in $TLS_SECRETS; do
-    echo ">> Cleaning up certificate for ${TLS_SECRET} as tls-acme is set to false"
-    # check if it is a lets encrypt certificate
-    if kubectl -n ${NAMESPACE} get secret ${TLS_SECRET} &> /dev/null; then
-      if openssl x509 -in <(kubectl -n ${NAMESPACE} get secret ${TLS_SECRET} -o json | jq -r '.data."tls.crt" | @base64d') -text -noout | grep -o -q "Let's Encrypt" &> /dev/null; then
-        kubectl -n ${NAMESPACE} delete secret ${TLS_SECRET}
-      fi
-    fi
-    if kubectl -n ${NAMESPACE} get certificates.cert-manager.io ${TLS_SECRET} &> /dev/null; then
-      kubectl -n ${NAMESPACE} delete certificates.cert-manager.io ${TLS_SECRET}
-    fi
-  done
+  cleanupCertificates "${TLS_FALSE_INGRESS}" "true"
 done
 
 currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
@@ -1749,12 +1762,13 @@ if [ "$(featureFlag INSIGHTS)" = enabled ]; then
   ##############################################
   ### RUN insights gathering and store in configmap
   ##############################################
+  set +e # Ensure failures in exec-generate-insights-configmap.sh don't halt the entire build
   INSIGHTS_WARNING_COUNT=0
   for IMAGE_NAME in "${!IMAGES_BUILD[@]}"
   do
     IMAGE_TAG="${IMAGE_TAG:-latest}"
     IMAGE_FULL="${REGISTRY}/${PROJECT}/${ENVIRONMENT}/${IMAGE_NAME}:${IMAGE_TAG}"
-    insightsOutput=$(. /kubectl-build-deploy/scripts/exec-generate-insights-configmap.sh)
+    insightsOutput=$(. /kubectl-build-deploy/scripts/exec-generate-insights-configmap.sh 2>&1)
     if (exit $?); then
       echo "${insightsOutput}"
     else
@@ -1762,7 +1776,9 @@ if [ "$(featureFlag INSIGHTS)" = enabled ]; then
       echo "> This insights run failed, this warning is for information only."
       echo "${insightsOutput}"
     fi
+    echo ""
   done
+  set -e
   if [[ "$INSIGHTS_WARNING_COUNT" -gt 0 ]]; then
     ((++BUILD_WARNING_COUNT))
     echo "##############################################"

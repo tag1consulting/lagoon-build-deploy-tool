@@ -104,7 +104,7 @@ func generateServicesFromDockerCompose(
 
 	// unmarshal the docker-compose.yml file
 	lCompose, lComposeOrder, lComposeVolumes, err := lagoon.UnmarshaDockerComposeYAML(
-		buildValues.LagoonYAML.DockerComposeYAML,
+		buildValues.LagoonYAMLFile,
 		ignoreNonStringKeyErrors,
 		ignoreMissingEnvFiles,
 		composeVars,
@@ -558,6 +558,12 @@ func composeToServiceValues(
 			if helpers.Contains(typesWithBackups, lagoonType) {
 				backupsEnabled = true
 
+			}
+		}
+		// if there are any additional volumes that have backups configured, enable the backup schedule
+		for _, v := range serviceVolumes {
+			if v.Backup {
+				backupsEnabled = true
 			}
 		}
 
