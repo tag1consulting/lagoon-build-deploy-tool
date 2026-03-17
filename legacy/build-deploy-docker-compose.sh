@@ -40,20 +40,15 @@ function contains() {
 #    build-deploy controller. This overrides the other variables and allows
 #    policy enforcement at the cluster level.
 #
-# 2. The regular feature flag, prefixed with LAGOON_FEATURE_FLAG_, in the
-#    Lagoon environment global scoped env-vars. This allows policy control at
-#    the environment level.
+# 2. The regular feature flag, prefixed with LAGOON_FEATURE_FLAG_, in a
+#    Lagoon build scoped env-var. This allows policy control at the project
+#    level.
 #
-# 3. The regular feature flag, prefixed with LAGOON_FEATURE_FLAG_, in the
-#    Lagoon project global scoped env-vars. This allows policy control at the
-#    project level. Lagoon core consolidates all env-vars into the environment.
-#    Project env-vars are only checked for backwards compatibility.
-#
-# 4. The cluster-default feature flag, prefixed with
+# 3. The cluster-default feature flag, prefixed with
 #    LAGOON_FEATURE_FLAG_DEFAULT_, as a build pod environment variable. This is
 #    set via a flag on the build-deploy controller. This allows default policy
 #    to be set at the cluster level, but maintains the ability to selectively
-#    override at the project or environment level.
+#    override at the project level.
 #
 # The value of the first variable found is printed to stdout. If the variable
 # is not found, print an empty string. Additional arguments are ignored.
@@ -67,12 +62,7 @@ function featureFlag() {
 	forceFlagVar="LAGOON_FEATURE_FLAG_FORCE_$1"
 	[ "${!forceFlagVar}" ] && echo "${!forceFlagVar}" && return
 
-	flagVar="LAGOON_FEATURE_FLAG_$1"
-	# check Lagoon environment variables
-	flagValue=$(jq -r '.[] | select(.scope == "global" and .name == "'"$flagVar"'") | .value' <<<"$LAGOON_ENVIRONMENT_VARIABLES")
-	[ "$flagValue" ] && echo "$flagValue" && return
-	# check Lagoon project variables
-	flagValue=$(jq -r '.[] | select(.scope == "global" and .name == "'"$flagVar"'") | .value' <<<"$LAGOON_PROJECT_VARIABLES")
+	flagValue=$(buildEnvVarCheck "LAGOON_FEATURE_FLAG_$1")
 	[ "$flagValue" ] && echo "$flagValue" && return
 
 	# fall back to the default, if set.
@@ -111,10 +101,10 @@ function buildEnvVarCheck() {
 
   flagVar="$1"
   # check Lagoon environment variables
-  flagValue=$(jq -r '.[] | select(.scope == "build") | select(.name == "'"$flagVar"'") | .value' <<< "$LAGOON_ENVIRONMENT_VARIABLES")
+  flagValue=$(jq -r '.[] | select(.scope == "build" or .scope == "global") | select(.name == "'"$flagVar"'") | .value' <<< "$LAGOON_ENVIRONMENT_VARIABLES")
   [ "$flagValue" ] && echo "$flagValue" && return
   # check Lagoon project variables
-  flagValue=$(jq -r '.[] | select(.scope == "build") | select(.name == "'"$flagVar"'") | .value' <<< "$LAGOON_PROJECT_VARIABLES")
+  flagValue=$(jq -r '.[] | select(.scope == "build" or .scope == "global") | select(.name == "'"$flagVar"'") | .value' <<< "$LAGOON_PROJECT_VARIABLES")
   [ "$flagValue" ] && echo "$flagValue" && return
 
   echo "$2"
@@ -447,14 +437,14 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
       # this logic will make development environments return an error by default
       # adding LAGOON_FEATURE_FLAG_DEVELOPMENT_DOCKER_COMPOSE_VALIDATION=disabled can be used to disable the error and revert to a warning per project or environment
       # or add LAGOON_FEATURE_FLAG_DEFAULT_DEVELOPMENT_DOCKER_COMPOSE_VALIDATION=disabled to the remote-controller as a default to disable for a cluster
-      if [[ "$(featureFlag DEVELOPMENT_DOCKER_COMPOSE_VALIDATION)" != disabled ]] && [[ "$ENVIRONMENT_TYPE" == "development" ]]; then
+      if [[ "$(featureFlag DEVELOPMENT_DOCKER_COMPOSE_VALIDATION | tr '[:upper:]' '[:lower:]')" != disabled ]] && [[ "$ENVIRONMENT_TYPE" == "development" ]]; then
         DOCKER_COMPOSE_VALIDATION_ERROR=true
       fi
       # by default, production environments won't return an error unless the feature flag is enabled.
       # this allows using the feature flag to selectively apply to production environments if required
       # adding LAGOON_FEATURE_FLAG_PRODUCTION_DOCKER_COMPOSE_VALIDATION=enabled can be used to enable the error per project or environment
       # or add LAGOON_FEATURE_FLAG_DEFAULT_PRODUCTION_DOCKER_COMPOSE_VALIDATION=enabled to the remote-controller as a default to disable for a cluster
-      if [[ "$(featureFlag PRODUCTION_DOCKER_COMPOSE_VALIDATION)" = enabled ]] && [[ "$ENVIRONMENT_TYPE" == "production" ]]; then
+      if [[ "$(featureFlag PRODUCTION_DOCKER_COMPOSE_VALIDATION | tr '[:upper:]' '[:lower:]')" = enabled ]] && [[ "$ENVIRONMENT_TYPE" == "production" ]]; then
         DOCKER_COMPOSE_VALIDATION_ERROR=true
       DOCKER_COMPOSE_VALIDATION_ERROR_VARIABLE=LAGOON_FEATURE_FLAG_PRODUCTION_DOCKER_COMPOSE_VALIDATION
       fi
@@ -1228,9 +1218,9 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
       # usually this is because of a bad merge or something, and people generally aren't reading warnings anyway
       echo ">> Lagoon detected routes that have been removed from the .lagoon.yml or Lagoon API"
       echo "> If you need these routes, you should update your .lagoon.yml file and make sure the routes exist."
-      if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" != enabled ]; then
+      if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES | tr '[:upper:]' '[:lower:]')" != enabled ]; then
         echo "> If you no longer need these routes, you can instruct Lagoon to remove it from the environment by setting the following variable"
-        echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' as a GLOBAL scoped variable to this environment or project"
+        echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' as a BUILD scoped variable to this environment or project"
         echo "> You should remove this variable after the deployment has been completed, otherwise future route removals will happen automatically"
       else
         echo "> 'LAGOON_FEATURE_FLAG_CLEANUP_REMOVED_LAGOON_ROUTES=enabled' is configured and the following routes will be removed."
@@ -1239,7 +1229,7 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
       echo "> Future releases of Lagoon may remove routes automatically, you should ensure that your routes are up always up to date if you see this warning"
       for DI in ${DELETE_INGRESS[@]}
       do
-        if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES)" = enabled ]; then
+        if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_ROUTES | tr '[:upper:]' '[:lower:]')" = enabled ]; then
           if kubectl -n ${NAMESPACE} get ingress ${DI} &> /dev/null; then
             echo ">> Removing ingress ${DI}"
             cleanupCertificates "${DI}" "false"
@@ -1389,37 +1379,40 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
   # standard deployment
 else
   # variable only deployment
+  MARIADB_CONSUMER_COUNT=0
   MARIADB_DBAAS_CONSUMERS=$(echo "$ENVIRONMENT_DATA" | jq -r '.mariadbconsumers.items[]? | @base64')
   for MARIADB_DBAAS_CONSUMER in ${MARIADB_DBAAS_CONSUMERS}; do
-    SERVICE_NAME=$(echo ${MARIADB_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | .metadata.name')
-    MARIADB_DBAAS_CONSUMER_SPECS["${SERVICE_NAME}"]=$(echo ${MARIADB_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | . | @base64')
+    ((++MARIADB_CONSUMER_COUNT))
+    MARIADB_DBAAS_CONSUMER_SPECS["${MARIADB_CONSUMER_COUNT}"]=$(echo ${MARIADB_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | . | @base64')
   done
+  MONGODB_CONSUMER_COUNT=0
   MONGODB_DBAAS_CONSUMERS=$(echo "$ENVIRONMENT_DATA" | jq -r '.mongodbconsumers.items[]? | @base64')
   for MONGODB_DBAAS_CONSUMER in ${MONGODB_DBAAS_CONSUMERS}; do
-    SERVICE_NAME=$(echo ${MONGODB_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | .metadata.name')
-    MONGODB_DBAAS_CONSUMER_SPECS["${SERVICE_NAME}"]=$(echo ${MONGODB_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | . | @base64')
+    ((++MONGODB_CONSUMER_COUNT))
+    MONGODB_DBAAS_CONSUMER_SPECS["${MONGODB_CONSUMER_COUNT}"]=$(echo ${MONGODB_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | . | @base64')
   done
+  POSTGRES_CONSUMER_COUNT=0
   POSTGRES_DBAAS_CONSUMERS=$(echo "$ENVIRONMENT_DATA" | jq -r '.postgresqlconsumers.items[]? | @base64')
   for POSTGRES_DBAAS_CONSUMER in ${POSTGRES_DBAAS_CONSUMERS}; do
-    SERVICE_NAME=$(echo ${POSTGRES_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | .metadata.name')
-    POSTGRES_DBAAS_CONSUMER_SPECS["${SERVICE_NAME}"]=$(echo ${POSTGRES_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | . | @base64')
+    ((++POSTGRES_CONSUMER_COUNT))
+    POSTGRES_DBAAS_CONSUMER_SPECS["${POSTGRES_CONSUMER_COUNT}"]=$(echo ${POSTGRES_DBAAS_CONSUMER} | jq -Rr '@base64d | fromjson | . | @base64')
   done
   # variable only deployment
 fi
 
 # convert specs into credential dump for ingestion by build-deploy-tool
 DBAAS_VARIABLES="[]"
-for SERVICE_NAME in "${!MARIADB_DBAAS_CONSUMER_SPECS[@]}"
+for MARIADB_CONSUMER_KEY in "${!MARIADB_DBAAS_CONSUMER_SPECS[@]}"
 do
-  SERVICE_NAME=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .metadata.name')
+  SERVICE_NAME=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .metadata.name')
   SERVICE_NAME_UPPERCASE=$(echo "$SERVICE_NAME" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
-  DB_HOST=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.primary')
-  DB_USER=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.username')
-  DB_PASSWORD=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.password')
-  DB_NAME=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.database')
-  DB_PORT=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.provider.port')
+  DB_HOST=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.primary')
+  DB_USER=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.username')
+  DB_PASSWORD=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.password')
+  DB_NAME=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.database')
+  DB_PORT=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.provider.port')
   DB_CONSUMER='{"'${SERVICE_NAME_UPPERCASE}'_HOST":"'${DB_HOST}'", "'${SERVICE_NAME_UPPERCASE}'_USERNAME":"'${DB_USER}'","'${SERVICE_NAME_UPPERCASE}'_PASSWORD":"'${DB_PASSWORD}'","'${SERVICE_NAME_UPPERCASE}'_DATABASE":"'${DB_NAME}'","'${SERVICE_NAME_UPPERCASE}'_PORT":"'${DB_PORT}'"}'
-  if DB_READREPLICA_HOSTS=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.replicas | .[]' 2>/dev/null); then
+  if DB_READREPLICA_HOSTS=$(echo ${MARIADB_DBAAS_CONSUMER_SPECS["$MARIADB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.replicas | .[]' 2>/dev/null); then
     if [ "$DB_READREPLICA_HOSTS" != "null" ]; then
       DB_READREPLICA_HOSTS=$(echo "$DB_READREPLICA_HOSTS" | sed 's/^\|$//g' | paste -sd, -)
       DB_CONSUMER=$(echo "${DB_CONSUMER}" | jq '. + {"'${SERVICE_NAME_UPPERCASE}'_READREPLICA_HOSTS":"'${DB_READREPLICA_HOSTS}'"}')
@@ -1428,17 +1421,17 @@ do
   DBAAS_VARIABLES=$(echo "$DBAAS_VARIABLES" | jq '. + '$(echo "$DB_CONSUMER" | jq -sMrc)'')
 done
 
-for SERVICE_NAME in "${!POSTGRES_DBAAS_CONSUMER_SPECS[@]}"
+for POSTGRES_CONSUMER_KEY in "${!POSTGRES_DBAAS_CONSUMER_SPECS[@]}"
 do
-  SERVICE_NAME=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .metadata.name')
+  SERVICE_NAME=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .metadata.name')
   SERVICE_NAME_UPPERCASE=$(echo "$SERVICE_NAME" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
-  DB_HOST=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.primary')
-  DB_USER=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.username')
-  DB_PASSWORD=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.password')
-  DB_NAME=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.database')
-  DB_PORT=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.provider.port')
+  DB_HOST=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.primary')
+  DB_USER=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.username')
+  DB_PASSWORD=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.password')
+  DB_NAME=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.database')
+  DB_PORT=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.provider.port')
   DB_CONSUMER='{"'${SERVICE_NAME_UPPERCASE}'_HOST":"'${DB_HOST}'", "'${SERVICE_NAME_UPPERCASE}'_USERNAME":"'${DB_USER}'","'${SERVICE_NAME_UPPERCASE}'_PASSWORD":"'${DB_PASSWORD}'","'${SERVICE_NAME_UPPERCASE}'_DATABASE":"'${DB_NAME}'","'${SERVICE_NAME_UPPERCASE}'_PORT":"'${DB_PORT}'"}'
-  if DB_READREPLICA_HOSTS=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.replicas | .[]' 2>/dev/null); then
+  if DB_READREPLICA_HOSTS=$(echo ${POSTGRES_DBAAS_CONSUMER_SPECS["$POSTGRES_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.replicas | .[]' 2>/dev/null); then
     if [ "$DB_READREPLICA_HOSTS" != "null" ]; then
       DB_READREPLICA_HOSTS=$(echo "$DB_READREPLICA_HOSTS" | sed 's/^\|$//g' | paste -sd, -)
       DB_CONSUMER=$(echo "${DB_CONSUMER}" | jq '. + {"'${SERVICE_NAME_UPPERCASE}'_READREPLICA_HOSTS":"'${DB_READREPLICA_HOSTS}'"}')
@@ -1447,18 +1440,18 @@ do
   DBAAS_VARIABLES=$(echo "$DBAAS_VARIABLES" | jq '. + '$(echo "$DB_CONSUMER" | jq -sMrc)'')
 done
 
-for SERVICE_NAME in "${!MONGODB_DBAAS_CONSUMER_SPECS[@]}"
+for MONGODB_CONSUMER_KEY in "${!MONGODB_DBAAS_CONSUMER_SPECS[@]}"
 do
-  SERVICE_NAME=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .metadata.name')
+  SERVICE_NAME=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .metadata.name')
   SERVICE_NAME_UPPERCASE=$(echo "$SERVICE_NAME" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
-  DB_HOST=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.primary')
-  DB_USER=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.username')
-  DB_PASSWORD=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.password')
-  DB_NAME=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.consumer.database')
-  DB_PORT=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.provider.port')
-  DB_AUTHSOURCE=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.provider.auth.source')
-  DB_AUTHMECHANISM=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.provider.auth.mechanism')
-  DB_AUTHTLS=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$SERVICE_NAME"]} | jq -Rr '@base64d | fromjson | .spec.provider.auth.tls')
+  DB_HOST=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.services.primary')
+  DB_USER=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.username')
+  DB_PASSWORD=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.password')
+  DB_NAME=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.consumer.database')
+  DB_PORT=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.provider.port')
+  DB_AUTHSOURCE=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.provider.auth.source')
+  DB_AUTHMECHANISM=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.provider.auth.mechanism')
+  DB_AUTHTLS=$(echo ${MONGODB_DBAAS_CONSUMER_SPECS["$MONGODB_CONSUMER_KEY"]} | jq -Rr '@base64d | fromjson | .spec.provider.auth.tls')
   DB_CONSUMER='{"'${SERVICE_NAME_UPPERCASE}'_HOST":"'${DB_HOST}'", "'${SERVICE_NAME_UPPERCASE}'_USERNAME":"'${DB_USER}'", "'${SERVICE_NAME_UPPERCASE}'_PASSWORD":"'${DB_PASSWORD}'", "'${SERVICE_NAME_UPPERCASE}'_DATABASE":"'${DB_NAME}'", "'${SERVICE_NAME_UPPERCASE}'_PORT":"'${DB_PORT}'", "'${SERVICE_NAME_UPPERCASE}'_AUTHSOURCE":"'${DB_AUTHSOURCE}'", "'${SERVICE_NAME_UPPERCASE}'_AUTHMECHANISM":"'${DB_AUTHMECHANISM}'", "'${SERVICE_NAME_UPPERCASE}'_AUTHTLS":"'${DB_AUTHTLS}'"}'
   DBAAS_VARIABLES=$(echo "$DBAAS_VARIABLES" | jq '. + '$(echo "$DB_CONSUMER" | jq -sMrc)'')
 done
@@ -1604,7 +1597,7 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
     # check if k8up v2 feature flag is enabled
     LAGOON_BACKUP_YAML_FOLDER="/kubectl-build-deploy/lagoon/backup"
     mkdir -p $LAGOON_BACKUP_YAML_FOLDER
-    if [ "$(featureFlag K8UP_V2)" = enabled ]; then
+    if [ "$(featureFlag K8UP_V2 | tr '[:upper:]' '[:lower:]')" = enabled ]; then
     # build-tool doesn't do any capability checks yet, so do this for now
       if kubectl -n ${NAMESPACE} get schedule.k8up.io &> /dev/null; then
       echo "Backups: generating k8up.io/v1 resources"
@@ -1714,9 +1707,9 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
   ##############################################
 
   # remove any storage calculator pods before applying deployments to prevent storage binding issues
-  STORAGE_CALCULATOR_PODS=$(kubectl -n ${NAMESPACE} get pods -l lagoon.sh/storageCalculator=true --no-headers | cut -d " " -f 1 | xargs)
+  STORAGE_CALCULATOR_PODS=$(kubectl -n ${NAMESPACE} get pods -l lagoon.sh/storageCalculator=true --no-headers 2>/dev/null | cut -d " " -f 1 | xargs)
   for STORAGE_CALCULATOR_POD in $STORAGE_CALCULATOR_PODS; do
-    kubectl -n ${NAMESPACE} delete pod ${STORAGE_CALCULATOR_POD}
+    kubectl -n ${NAMESPACE} delete pod ${STORAGE_CALCULATOR_POD} 2>/dev/null
   done
 
   if [ "$(ls -A $LAGOON_SERVICES_YAML_FOLDER/)" ]; then
@@ -1774,6 +1767,51 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
   finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "deploymentApplyComplete" "Applying Deployments" "false"
   build-deploy-tool run hooks --hook-name "Pre Cronjob Cleanup" --hook-directory "pre-cronjob-cleanup"
   previousStepEnd=${currentStepEnd}
+
+  ##############################################
+  ### CLEANUP services which have been removed from docker-compose.yaml
+  ##############################################s
+
+  # using the build-deploy-tool identify the deployments, volumes, and services that this build has created
+  beginBuildStep "Unused Service Cleanup" "unusedServiceCleanup"
+  CLEANUP_OUTPUT=""
+  if [ "$(featureFlag CLEANUP_REMOVED_LAGOON_SERVICES)" != enabled ]; then
+    # run it in dry-run mode
+    CLEANUP_OUTPUT=$(build-deploy-tool run cleanup --images /kubectl-build-deploy/images.yaml)
+  else
+    # run it with the delete flag to actually remove services
+    CLEANUP_OUTPUT=$(build-deploy-tool run cleanup --images /kubectl-build-deploy/images.yaml --delete=true)
+  fi
+  CLEANUP_WARNING=false
+  if [ "$CLEANUP_OUTPUT" != "" ]; then
+    echo "${CLEANUP_OUTPUT}"
+    CLEANUP_WARNING=true
+    ((++BUILD_WARNING_COUNT))
+  else
+    echo ">> No services detected that require clean up"
+  fi
+
+  # collect data and save in configmap structured json of environment state, remote-controller will check for this configmap to provide to the api environment services
+  # this is run after the cleanup to ensure that only items that exist are stored in the configmap
+  # if a service has been abandoned (removed from the docker-compose file) and not cleaned up
+  # then the payload will contain the `abandoned` flag on the resource for when it is added to the lagoon api later on
+  # this will allow for visual representation in the api/ui of things that probably don't need to exist
+  if build-deploy-tool identify lagoon-services --images /kubectl-build-deploy/images.yaml > /kubectl-build-deploy/lagoon-services.json; then
+    echo "Updating lagoon-services configmap with a current service configurations"
+    if kubectl -n ${NAMESPACE} get configmap lagoon-services &> /dev/null; then
+      # replace it, no need to check if the key is different, as that will happen in the pre-deploy phase
+      kubectl -n ${NAMESPACE} get configmap lagoon-services -o json | jq --arg add "`cat /kubectl-build-deploy/lagoon-services.json`" '.data."post-deploy" = $add' | kubectl apply -f -
+    else
+      # create it
+      kubectl -n ${NAMESPACE} create configmap lagoon-services --from-file=post-deploy=/kubectl-build-deploy/lagoon-services.json
+    fi
+  fi
+
+  # finalize the service cleanup
+  currentStepEnd="$(date +"%Y-%m-%d %H:%M:%S")"
+  finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "unusedServiceCleanupComplete" "Unused Service Cleanup" "${CLEANUP_WARNING}"
+  previousStepEnd=${currentStepEnd}
+
   beginBuildStep "Cronjob Cleanup" "cleaningUpCronjobs"
 
   ##############################################
@@ -1859,7 +1897,7 @@ if [ "${LAGOON_VARIABLES_ONLY}" != "true" ]; then
   finalizeBuildStep "${buildStartTime}" "${previousStepEnd}" "${currentStepEnd}" "${NAMESPACE}" "deployCompleted" "Build and Deploy" "false"
   previousStepEnd=${currentStepEnd}
 
-  if [ "$(featureFlag INSIGHTS)" = enabled ]; then
+  if [ "$(featureFlag INSIGHTS | tr '[:upper:]' '[:lower:]')" = enabled ]; then
     beginBuildStep "Insights Gathering" "gatheringInsights"
     ##############################################
     ### RUN insights gathering and store in configmap

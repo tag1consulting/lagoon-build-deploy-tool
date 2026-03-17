@@ -14,7 +14,7 @@ var featureFlagIdentify = &cobra.Command{
 	Aliases: []string{"f"},
 	Short:   "Identify if a feature flag has been enabled",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		generator, err := generator.GenerateInput(*rootCmd, false)
+		generator, err := GenerateInput(*rootCmd, false)
 		if err != nil {
 			return err
 		}
@@ -40,7 +40,7 @@ func IdentifyFeatureFlag(g generator.GeneratorInput, name string) (string, error
 	if forceFlagVar != "" {
 		return forceFlagVar, nil
 	}
-	featureFlagVar, _ := lagoon.GetLagoonVariable(fmt.Sprintf("%s%s", "LAGOON_FEATURE_FLAG_", name), []string{"build", "global"}, lagoonBuild.BuildValues.EnvironmentVariables)
+	featureFlagVar, _ := lagoon.GetBuildVariable(fmt.Sprintf("%s%s", "LAGOON_FEATURE_FLAG_", name), lagoonBuild.BuildValues.EnvironmentVariables)
 	if featureFlagVar != nil {
 		return featureFlagVar.Value, nil
 	}
