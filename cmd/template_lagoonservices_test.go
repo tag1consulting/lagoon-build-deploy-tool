@@ -617,8 +617,7 @@ func TestTemplateLagoonServices(t *testing.T) {
 						"cli":   "harbor.example/example-project/main/cli@sha256:b2001babafaa8128fe89aa8fd11832cade59931d14c3de5b3ca32e2a010fbaa8",
 					},
 				}, true),
-			templatePath: "testoutput",
-			want:         "internal/testdata/complex/service-templates/test16-nginx-php-resources",
+			want: "internal/testdata/complex/service-templates/test16-nginx-php-resources",
 		},
 		{
 			name:        "test-basic-external-service",

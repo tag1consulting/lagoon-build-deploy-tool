@@ -1654,7 +1654,7 @@ func Test_composeToServiceValues(t *testing.T) {
 				BackupsEnabled:             true,
 			},
 		},
-				// tag1 tests
+		// tag1 tests
 		{
 			name: "test24 - service label resource requirements into ServiceValues",
 			args: args{
