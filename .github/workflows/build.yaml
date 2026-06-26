@@ -21,4 +21,4 @@ jobs:
       uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7
       with:
         version: latest
-        args: build --snapshot --rm-dist
+        args: build --snapshot --clean
