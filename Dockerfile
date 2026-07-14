@@ -21,7 +21,14 @@ COPY internal/ internal/
 
 ARG BUILD
 ARG GO_VER
-ARG VERSION 
+ARG VERSION
+# TARGETOS/TARGETARCH are populated automatically by Docker Buildx per
+# platform (see https://docs.docker.com/build/building/multi-platform/) --
+# using them here lets the Go compile cross-compile natively on the build
+# host instead of relying on QEMU to emulate the entire golang build stage
+# for non-native platforms.
+ARG TARGETOS
+ARG TARGETARCH
 ENV BUILD=${BUILD} \
     GO_VER=${GO_VER} \
     VERSION=${VERSION}
@@ -32,7 +39,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Do not force rebuild of up-to-date packages (do not use -a) and use the compiler cache folder
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w \
     -X github.com/uselagoon/build-deploy-tool/cmd.bdtBuild=${BUILD} \
     -X github.com/uselagoon/build-deploy-tool/cmd.goVersion=${GO_VER} \
