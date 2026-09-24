@@ -9,11 +9,12 @@ import (
 	"github.com/uselagoon/build-deploy-tool/internal/helpers"
 	"github.com/uselagoon/build-deploy-tool/internal/identify"
 	"github.com/uselagoon/build-deploy-tool/internal/k8s"
+	"github.com/uselagoon/machinery/api/schema"
 )
 
 type LagoonServices struct {
-	Services []identify.EnvironmentService `json:"services"`
-	Volumes  []identify.EnvironmentVolume  `json:"volumes"`
+	Services []schema.EnvironmentService `json:"services"`
+	Volumes  []schema.EnvironmentVolume  `json:"volumes"`
 }
 
 var lagoonServiceIdentify = &cobra.Command{
@@ -49,7 +50,7 @@ var lagoonServiceIdentify = &cobra.Command{
 		}
 		gen.Namespace = namespace
 		gen.ImageReferences = imageRefs.Images
-		services, _, _, _, _, _, _, _, err := identify.GetCurrentState(col, gen)
+		services, _, _, _, _, _, _, _, _, err := identify.GetCurrentState(col, gen)
 		if err != nil {
 			return err
 		}
