@@ -7,8 +7,11 @@ import (
 	mariadbv1 "github.com/amazeeio/dbaas-operator/apis/mariadb/v1"
 	mongodbv1 "github.com/amazeeio/dbaas-operator/apis/mongodb/v1"
 	postgresv1 "github.com/amazeeio/dbaas-operator/apis/postgres/v1"
+
+	traefik "github.com/traefik/traefik/v3/pkg/provider/kubernetes/crd/traefikio/v1alpha1"
 	"github.com/uselagoon/build-deploy-tool/internal/collector"
 	"github.com/uselagoon/build-deploy-tool/internal/generator"
+	"github.com/uselagoon/machinery/api/schema"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -21,32 +24,33 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 	[]appsv1.Deployment,
 	[]corev1.PersistentVolumeClaim,
 	[]corev1.Service,
+	[]traefik.Middleware,
 	*collector.LagoonEnvState,
 	error,
 ) {
 	lagoonServices := LagoonServices{
-		Services: []EnvironmentService{},
-		Volumes:  []EnvironmentVolume{},
+		Services: []schema.EnvironmentService{},
+		Volumes:  []schema.EnvironmentVolume{},
 	}
 	out, currentServices, err := LagoonServiceTemplateIdentification(gen)
 	if err != nil {
-		return lagoonServices, nil, nil, nil, nil, nil, nil, nil, err
+		return lagoonServices, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	dbaas, err := IdentifyDBaaSConsumers(gen)
 	if err != nil {
-		return lagoonServices, nil, nil, nil, nil, nil, nil, nil, err
+		return lagoonServices, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	state, err := c.Collect(context.Background(), gen.Namespace)
 	if err != nil {
-		return lagoonServices, nil, nil, nil, nil, nil, nil, nil, err
+		return lagoonServices, nil, nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	// add any dbaas that should exist to the current services
 	for _, prov := range dbaas {
 		sp := strings.Split(prov, ":")
-		currentServices.Services = append(currentServices.Services, EnvironmentService{
+		currentServices.Services = append(currentServices.Services, schema.EnvironmentService{
 			Name: sp[0],
 			Type: sp[1],
 		})
@@ -55,7 +59,7 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 	mariadbMatch := false
 	var mariadbDelete []mariadbv1.MariaDBConsumer
 	for _, exist := range state.MariaDBConsumers.Items {
-		service := EnvironmentService{
+		service := schema.EnvironmentService{
 			Name: exist.Name,
 			Type: "mariadb-dbaas",
 		}
@@ -79,7 +83,7 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 	mongodbMatch := false
 	var mongodbDelete []mongodbv1.MongoDBConsumer
 	for _, exist := range state.MongoDBConsumers.Items {
-		service := EnvironmentService{
+		service := schema.EnvironmentService{
 			Name: exist.Name,
 			Type: "mongodb-dbaas",
 		}
@@ -103,7 +107,7 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 	postgresqlMatch := false
 	var postgresqlDelete []postgresv1.PostgreSQLConsumer
 	for _, exist := range state.PostgreSQLConsumers.Items {
-		service := EnvironmentService{
+		service := schema.EnvironmentService{
 			Name: exist.Name,
 			Type: "postgres-dbaas",
 		}
@@ -124,10 +128,26 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 		lagoonServices.Services = append(lagoonServices.Services, service)
 	}
 
+	middlewareMatch := false
+	var middlewareDelete []traefik.Middleware
+	for _, exist := range state.TraefikMiddleware.Items {
+		for _, middleware := range out.TraefikMiddleware {
+			if exist.Name == middleware {
+				middlewareMatch = true
+				continue
+			}
+		}
+		if !middlewareMatch {
+			middlewareDelete = append(middlewareDelete, exist)
+		}
+		middlewareMatch = false
+	}
+
 	volMatch := false
 	var volDelete []corev1.PersistentVolumeClaim
 	for _, exist := range state.PVCs.Items {
 		size := exist.Spec.Resources.Requests.Storage
+		sizeInt64, _ := size().AsInt64()
 		storeType := "block"
 		if exist.Spec.StorageClassName != nil {
 			switch *exist.Spec.StorageClassName {
@@ -135,11 +155,11 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 				storeType = "bulk"
 			}
 		}
-		kubevol := EnvironmentVolume{
-			Name:        exist.Name,
-			StorageType: storeType,
-			Type:        exist.Labels["lagoon.sh/service-type"],
-			Size:        size().String(),
+		kubevol := schema.EnvironmentVolume{
+			Name:         exist.Name,
+			StorageType:  storeType,
+			Type:         exist.Labels["lagoon.sh/service-type"],
+			KiBRequested: sizeInt64 / 1024, //convert to byte to kibibyte to match storage saved in api
 		}
 		for _, prov := range out.Volumes {
 			if exist.Name == prov {
@@ -173,33 +193,33 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 	depMatch := false
 	var depDelete []appsv1.Deployment
 	for _, exist := range state.Deployments.Items {
-		containers := []ServiceContainer{}
+		containers := []schema.ServiceContainer{}
 		for _, c := range exist.Spec.Template.Spec.Containers {
-			volumes := []VolumeMount{}
+			volumes := []schema.VolumeMount{}
 			for _, v := range c.VolumeMounts {
 				for _, vo := range lagoonServices.Volumes {
 					if vo.Name == v.Name {
-						volumes = append(volumes, VolumeMount{
+						volumes = append(volumes, schema.VolumeMount{
 							Name: v.Name,
 							Path: v.MountPath,
 						})
 					}
 				}
 			}
-			ports := []ContainerPort{}
+			ports := []schema.ContainerPort{}
 			for _, p := range c.Ports {
-				ports = append(ports, ContainerPort{
+				ports = append(ports, schema.ContainerPort{
 					Name: p.Name,
 					Port: int(p.ContainerPort),
 				})
 			}
-			containers = append(containers, ServiceContainer{
-				Name:    c.Name,
-				Volumes: volumes,
-				Ports:   ports,
+			containers = append(containers, schema.ServiceContainer{
+				Name:         c.Name,
+				Volumemounts: volumes,
+				Ports:        ports,
 			})
 		}
-		service := EnvironmentService{
+		service := schema.EnvironmentService{
 			Name:       exist.Name,
 			Type:       exist.Labels["lagoon.sh/service-type"],
 			Containers: containers,
@@ -230,10 +250,10 @@ func GetCurrentState(c *collector.Collector, gen generator.GeneratorInput) (
 		}
 	}
 
-	return lagoonServices, mariadbDelete, mongodbDelete, postgresqlDelete, depDelete, volDelete, servDelete, state, nil
+	return lagoonServices, mariadbDelete, mongodbDelete, postgresqlDelete, depDelete, volDelete, servDelete, middlewareDelete, state, nil
 }
 
-func serviceExists(services []EnvironmentService, serviceName string) bool {
+func serviceExists(services []schema.EnvironmentService, serviceName string) bool {
 	for _, svc := range services {
 		if svc.Name == serviceName {
 			return true
@@ -242,7 +262,7 @@ func serviceExists(services []EnvironmentService, serviceName string) bool {
 	return false
 }
 
-func volumeExists(volumes []EnvironmentVolume, volumeName string) bool {
+func volumeExists(volumes []schema.EnvironmentVolume, volumeName string) bool {
 	for _, vol := range volumes {
 		if vol.Name == volumeName {
 			return true

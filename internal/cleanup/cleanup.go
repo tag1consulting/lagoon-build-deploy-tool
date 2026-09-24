@@ -3,18 +3,35 @@ package cleanup
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/uselagoon/build-deploy-tool/internal/collector"
 	"github.com/uselagoon/build-deploy-tool/internal/generator"
 	"github.com/uselagoon/build-deploy-tool/internal/identify"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
 	client "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDeletion bool) ([]string, []string, []string, []string, []string, []string, error) {
-	_, mariadbDelete, mongodbDelete, postgresqlDelete, depDelete, volDelete, servDelete, state, err := identify.GetCurrentState(c, gen)
+func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDeletion bool) ([]string, []string, []string, []string, []string, []string, []string, error) {
+	_, mariadbDelete, mongodbDelete, postgresqlDelete, depDelete, volDelete, servDelete, middlewareDelete, state, err := identify.GetCurrentState(c, gen)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
+	middlewareToDelete := []string{}
+	// always cleanup any unused middlewares
+	if len(middlewareDelete) > 0 {
+		ctx := context.Background()
+		for _, i := range middlewareDelete {
+			if err := c.Client.Delete(ctx, &i); err != nil {
+				fmt.Printf("!! Error removing middleware %s\n", i.Name)
+			} else {
+				middlewareToDelete = append(middlewareToDelete, i.Name)
+			}
+
+		}
+	}
+	// now deal with services
 	if len(mariadbDelete) > 0 || len(mongodbDelete) > 0 || len(postgresqlDelete) > 0 || len(depDelete) > 0 || len(volDelete) > 0 || len(servDelete) > 0 {
 		fmt.Println(`>> Lagoon detected services or volumes that have been removed from the docker-compose file`)
 		if !performDeletion {
@@ -40,6 +57,9 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 				if err := c.Client.Delete(ctx, &i); err != nil {
 					fmt.Printf("!! Error removing deployment %s\n", i.Name)
 				}
+				if err := pollDeleted(ctx, c.Client, client.ObjectKeyFromObject(&i), &i); err != nil {
+					fmt.Printf("!! Error removing deployment %s\n", i.Name)
+				}
 			} else {
 				fmt.Printf(">> Would remove deployment %s\n", i.Name)
 			}
@@ -49,6 +69,9 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 			if performDeletion {
 				fmt.Printf(">> Removing volume %s\n", i.Name)
 				if err := c.Client.Delete(ctx, &i); err != nil {
+					fmt.Printf("!! Error removing volume %s\n", i.Name)
+				}
+				if err := pollDeleted(ctx, c.Client, client.ObjectKeyFromObject(&i), &i); err != nil {
 					fmt.Printf("!! Error removing volume %s\n", i.Name)
 				}
 			} else {
@@ -62,6 +85,9 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 				if err := c.Client.Delete(ctx, &i); err != nil {
 					fmt.Printf("!! Error removing service %s\n", i.Name)
 				}
+				if err := pollDeleted(ctx, c.Client, client.ObjectKeyFromObject(&i), &i); err != nil {
+					fmt.Printf("!! Error removing service %s\n", i.Name)
+				}
 			} else {
 				fmt.Printf(">> Would remove service %s\n", i.Name)
 			}
@@ -71,6 +97,9 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 			if performDeletion {
 				fmt.Printf(">> Removing mariadb consumer %s\n", i.Name)
 				if err := c.Client.Delete(ctx, &i); err != nil {
+					fmt.Printf("!! Error removing mariadb consumer %s\n", i.Name)
+				}
+				if err := pollDeleted(ctx, c.Client, client.ObjectKeyFromObject(&i), &i); err != nil {
 					fmt.Printf("!! Error removing mariadb consumer %s\n", i.Name)
 				}
 				err := removePreBackupPod(ctx, c.Client, state, i.Name)
@@ -88,6 +117,9 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 				if err := c.Client.Delete(ctx, &i); err != nil {
 					fmt.Printf("!! Error removing mongodb consumer %s\n", i.Name)
 				}
+				if err := pollDeleted(ctx, c.Client, client.ObjectKeyFromObject(&i), &i); err != nil {
+					fmt.Printf("!! Error removing mongodb consume %s\n", i.Name)
+				}
 				err := removePreBackupPod(ctx, c.Client, state, i.Name)
 				if err != nil {
 					fmt.Printf("!! Error removing prebackuppod for mongodb consumer %s\n", i.Name)
@@ -103,6 +135,9 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 				if err := c.Client.Delete(ctx, &i); err != nil {
 					fmt.Printf("!! Error removing postgresql consumer %s\n", i.Name)
 				}
+				if err := pollDeleted(ctx, c.Client, client.ObjectKeyFromObject(&i), &i); err != nil {
+					fmt.Printf("!! Error removing postgresql consumer %s\n", i.Name)
+				}
 				err := removePreBackupPod(ctx, c.Client, state, i.Name)
 				if err != nil {
 					fmt.Printf("!! Error removing prebackuppod for postgresql consumer %s\n", i.Name)
@@ -111,28 +146,52 @@ func RunCleanup(c *collector.Collector, gen generator.GeneratorInput, performDel
 				fmt.Printf(">> Would remove postgresql consumer %s and associated components\n", i.Name)
 			}
 		}
-		return mariaDBToDelete, mongoDBToDelete, postgresToDelete, deploymentsToDelete, volumesToDelete, servicesToDelete, nil
+		return mariaDBToDelete, mongoDBToDelete, postgresToDelete, deploymentsToDelete, volumesToDelete, servicesToDelete, middlewareToDelete, nil
 	} else {
-		return nil, nil, nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, middlewareToDelete, nil
 	}
 }
 
 func removePreBackupPod(ctx context.Context, c client.Client, state *collector.LagoonEnvState, name string) error {
 	for _, pbp := range state.PreBackupPodsV1.Items {
 		if pbp.Name == fmt.Sprintf("%s-prebackuppod", name) {
-			fmt.Printf(">> Removing mariadb prebackuppod %s\n", name)
+			fmt.Printf(">> Removing prebackuppod %s\n", name)
 			if err := c.Delete(ctx, &pbp); err != nil {
 				return err
+			}
+			if err := pollDeleted(ctx, c, client.ObjectKeyFromObject(&pbp), &pbp); err != nil {
+				fmt.Printf("!! Error removing prebackuppod for consumer %s\n", pbp.Name)
 			}
 		}
 	}
 	for _, pbp := range state.PreBackupPodsV1Alpha1.Items {
 		if pbp.Name == fmt.Sprintf("%s-prebackuppod", name) {
-			fmt.Printf(">> Removing mariadb prebackuppod %s\n", name)
+			fmt.Printf(">> Removing prebackuppod %s\n", name)
 			if err := c.Delete(ctx, &pbp); err != nil {
 				return err
 			}
+			if err := pollDeleted(ctx, c, client.ObjectKeyFromObject(&pbp), &pbp); err != nil {
+				fmt.Printf("!! Error removing prebackuppod for consumer %s\n", pbp.Name)
+			}
 		}
+	}
+	return nil
+}
+
+func pollDeleted(ctx context.Context, c client.Client, objKey client.ObjectKey, obj client.Object) error {
+	err := wait.PollUntilContextTimeout(ctx, time.Second, 90*time.Second, true, func(context.Context) (bool, error) {
+		err := c.Get(ctx, objKey, obj)
+		if k8serrors.IsNotFound(err) {
+			return true, nil // Object is gone, stop polling successfully
+		}
+		if err != nil {
+			return false, err // An unexpected error occurred
+		}
+		return false, nil // Object still exists, continue polling
+	})
+	if err != nil {
+		// Handle timeout or unexpected error during polling
+		return err
 	}
 	return nil
 }
